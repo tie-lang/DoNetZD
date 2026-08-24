@@ -176,6 +176,49 @@ public class QueryTests
     }
 
     [Fact]
+    public void Set_FillGaps_LeafArrayHoles()
+    {
+        var r = new ZdValue.Map(new Dictionary<string, ZdValue>
+        {
+            ["arr"] = new ZdValue.Array(new ZdValue[] { new ZdValue.Integer(1), new ZdValue.Integer(2) }),
+        });
+        // 默认严格：arr[4] 越界失败
+        Assert.False(ZdPath.TrySet(r, "arr[4]", new ZdValue.Integer(5), out _));
+        // fillGaps：扩容到长度 5，洞填 Null
+        ZdValue updated = ZdPath.Set(r, "arr[4]", new ZdValue.Integer(5), fillGaps: true);
+        var arr = (ZdValue.Array)ZdPath.Get(updated, "arr")!;
+        Assert.Equal(5, arr.Items.Count);
+        Assert.IsType<ZdValue.Null>(arr.Items[2]);   // 洞
+        Assert.IsType<ZdValue.Null>(arr.Items[3]);   // 洞
+        Assert.Equal(1L, ((ZdValue.Integer)arr.Items[0]).Value);   // 原元素保留
+        Assert.Equal(2L, ((ZdValue.Integer)arr.Items[1]).Value);   // 原元素保留
+        Assert.Equal(5L, ((ZdValue.Integer)arr.Items[4]).Value);
+    }
+
+    [Fact]
+    public void Set_FillGaps_IntermediateArrayBuildsContainers()
+    {
+        // m = [ [1] ]，写 m[3][0] = 5 → 洞填 Null，index 3 预建 Array 再写入
+        var r = new ZdValue.Map(new Dictionary<string, ZdValue>
+        {
+            ["m"] = new ZdValue.Array(new ZdValue[]
+            {
+                new ZdValue.Array(new ZdValue[] { new ZdValue.Integer(1) }),
+            }),
+        });
+        ZdValue updated = ZdPath.Set(r, "m[3][0]", new ZdValue.Integer(5), fillGaps: true);
+        var m = (ZdValue.Array)ZdPath.Get(updated, "m")!;
+        Assert.Equal(4, m.Items.Count);
+        Assert.IsType<ZdValue.Null>(m.Items[1]);
+        Assert.IsType<ZdValue.Null>(m.Items[2]);
+        var row3 = (ZdValue.Array)m.Items[3];
+        Assert.Single(row3.Items);
+        Assert.Equal(5L, ((ZdValue.Integer)row3.Items[0]).Value);
+        // 原根不变
+        Assert.Single(((ZdValue.Array)ZdPath.Get(r, "m[0]")!).Items);
+    }
+
+    [Fact]
     public void TrySet_Failures()
     {
         ZdValue r = Root();

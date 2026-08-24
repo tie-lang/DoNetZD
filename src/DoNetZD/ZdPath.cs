@@ -68,16 +68,20 @@ public static class ZdPath
     ///     中间处 i 越界失败；
     ///   - 段类型不匹配（Key 落在 Array / Index 落在 Map）失败。
     /// 失败抛 <see cref="InvalidOperationException"/>；需要忽略失败用 <see cref="TrySet"/>。
+    /// <paramref name="fillGaps"/> 为 true 时启用宽松模式：数组段越界自动扩容，
+    /// 空洞填充 <see cref="ZdValue.Null"/> 哨兵，中间越界位置预建下一段类型容器
+    /// （Key→Map / Index→Array）。注意 Null 哨兵无法编码为 zd 字节（见
+    /// <see cref="ZdValue.Null"/>），仅用于模型内操作与 JSON 等含 null 格式输出。
     /// </summary>
-    public static ZdValue Set(ZdValue root, string path, ZdValue value)
+    public static ZdValue Set(ZdValue root, string path, ZdValue value, bool fillGaps = false)
     {
-        if (!TrySet(root, path, value, out ZdValue? result))
+        if (!TrySet(root, path, value, out ZdValue? result, fillGaps))
             throw new InvalidOperationException($"路径不可写：{path}");
         return result!;
     }
 
     /// <summary>按路径写回；成功返回 true 并把新根写入 <paramref name="result"/>。</summary>
-    public static bool TrySet(ZdValue root, string path, ZdValue value, out ZdValue? result)
+    public static bool TrySet(ZdValue root, string path, ZdValue value, out ZdValue? result, bool fillGaps = false)
     {
         if (value is null)
             throw new ArgumentNullException(nameof(value));
@@ -92,12 +96,12 @@ public static class ZdPath
             result = value;
             return true;
         }
-        ZdValue? r = SetCore(root, segs, 0, value);
+        ZdValue? r = SetCore(root, segs, 0, value, fillGaps);
         result = r;
         return r != null;
     }
 
-    private static ZdValue? SetCore(ZdValue? node, Seg[] segs, int idx, ZdValue value)
+    private static ZdValue? SetCore(ZdValue? node, Seg[] segs, int idx, ZdValue value, bool fillGaps)
     {
         bool last = idx == segs.Length - 1;
         switch (segs[idx])
@@ -124,7 +128,7 @@ public static class ZdPath
                     sub = new ZdValue.Map(new Dictionary<string, ZdValue>());
                     nm[key.Name] = sub;
                 }
-                ZdValue? newSub = SetCore(sub, segs, idx + 1, value);
+                ZdValue? newSub = SetCore(sub, segs, idx + 1, value, fillGaps);
                 if (newSub == null)
                     return null;
                 nm[key.Name] = newSub;
@@ -135,7 +139,19 @@ public static class ZdPath
                 var items = new List<ZdValue>(a.Items);
                 if (last)
                 {
-                    if (ix.I < 0 || ix.I > items.Count)
+                    if (ix.I < 0)
+                        return null;
+                    if (fillGaps)
+                    {
+                        while (items.Count < ix.I)
+                            items.Add(ZdValue.Null.Instance);   // 洞
+                        if (items.Count == ix.I)
+                            items.Add(value);
+                        else
+                            items[ix.I] = value;
+                        return new ZdValue.Array(items);
+                    }
+                    if (ix.I > items.Count)
                         return null;                 // 越界（允许 == Count 追加）
                     if (ix.I == items.Count)
                         items.Add(value);
@@ -143,9 +159,23 @@ public static class ZdPath
                         items[ix.I] = value;
                     return new ZdValue.Array(items);
                 }
+                if (fillGaps)
+                {
+                    if (ix.I < 0)
+                        return null;
+                    while (items.Count < ix.I)
+                        items.Add(ZdValue.Null.Instance);                       // 洞
+                    if (items.Count == ix.I)
+                        items.Add(CreateContainer(segs[idx + 1]));               // 预建下一段容器
+                    ZdValue? newItem2 = SetCore(items[ix.I], segs, idx + 1, value, fillGaps);
+                    if (newItem2 == null)
+                        return null;
+                    items[ix.I] = newItem2;
+                    return new ZdValue.Array(items);
+                }
                 if (ix.I < 0 || ix.I >= items.Count)
                     return null;
-                ZdValue? newItem = SetCore(items[ix.I], segs, idx + 1, value);
+                ZdValue? newItem = SetCore(items[ix.I], segs, idx + 1, value, fillGaps);
                 if (newItem == null)
                     return null;
                 items[ix.I] = newItem;
@@ -154,6 +184,12 @@ public static class ZdPath
                 return null;
         }
     }
+
+    /// <summary>下一段为 Key 时预建空 Map，为 Index 时预建空 Array。</summary>
+    private static ZdValue CreateContainer(Seg next)
+        => next is Key
+            ? (ZdValue)new ZdValue.Map(new Dictionary<string, ZdValue>())
+            : new ZdValue.Array(Array.Empty<ZdValue>());
 
     private abstract class Seg { }
     private sealed class Key : Seg { public string Name; public Key(string n) => Name = n; }

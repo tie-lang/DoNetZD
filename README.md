@@ -174,6 +174,10 @@ Map 键叶子可新增/替换、中间键缺失自动建链；Array 叶子处 `i
 越界失败；段类型不匹配失败。纯 Key 链也支持从 `null` 根建树。
 `TrySet` 返回 bool，避免抛异常。
 
+可选开关 `fillGaps: true` 启用宽松模式：数组段越界自动扩容，空洞填
+`ZdValue.Null` 哨兵，中间越界位置预建下一段容器（Key→Map / Index→Array）。
+注意 Null 哨兵不能编码为 zd 字节（仅限模型内操作与 JSON 等含 null 格式输出）。
+
 ```csharp
 ZdValue? host = ZdPath.Get(root, "server.host");
 ZdValue? name = ZdPath.Get(root, "$.users[1].name");
@@ -183,6 +187,8 @@ root = ZdPath.Set(root, "server.port", new ZdValue.Integer(9090));  // 替换
 root = ZdPath.Set(root, "cache.ttl", new ZdValue.Integer(600));     // 中间 cache 自动创建
 root = ZdPath.Set(root, "tags[1]", new ZdValue.String("X"));        // 数组元素替换
 ZdPath.TrySet(root, "users[9]", new ZdValue.Integer(1), out _);     // 越界 → false
+root = ZdPath.Set(root, "tags[4]", new ZdValue.String("Gap"), fillGaps: true);
+// tags 扩容到 5，[2][3] 为 Null 哨兵
 ```
 
 ### 深度比较 / 合并 / 遍历
