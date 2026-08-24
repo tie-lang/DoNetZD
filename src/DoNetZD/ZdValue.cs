@@ -40,6 +40,16 @@ public abstract class ZdValue
     /// <summary>字符串。</summary>
     public sealed class String(string value) : ZdValue { public string Value { get; } = value; }
 
+    /// <summary>null 哨兵：用于 JSON/XML 等含 null 的外部格式中转。
+    /// 注意 zd 字节格式本身没有 null 标签——Encode 到字节会抛异常，但可输出为 JSON null 等。</summary>
+    public sealed class Null : ZdValue
+    {
+        /// <summary>单例。</summary>
+        public static readonly Null Instance = new();
+
+        private Null() { }
+    }
+
     /// <summary>数组（长度在头部，元素顺序排列）。</summary>
     public sealed class Array(IReadOnlyList<ZdValue> items) : ZdValue { public IReadOnlyList<ZdValue> Items { get; } = items; }
 
@@ -68,8 +78,7 @@ public abstract class ZdValue
     {
         switch (obj)
         {
-            case null:
-                throw new ArgumentNullException(nameof(obj), "zd 不支持 null 值；请用 {zd:tile} 指定语义或用空字符串/0");
+            case null: return Null.Instance;                                   // null → 哨兵（zd 字节不可编码）
             case Integer zd: return zd;
             case Float zd: return zd;
             case Bool zd: return zd;
@@ -116,6 +125,7 @@ public abstract class ZdValue
             case Char c: return $"@{char.ConvertFromUtf32(c.Codepoint)} (U+{c.Codepoint:X4})";
             case Trit t: return t.Value.ToString();
             case String s: return "\"" + s.Value + "\"";
+            case Null: return "null";
             case Array a: return "[" + string.Join(", ", a.Items) + "]";
             case Map m: return "{" + string.Join(", ", m.Entries.Select(kv => $"{kv.Key}: {kv.Value}")) + "}";
             default: return base.ToString() ?? "";

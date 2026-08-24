@@ -26,6 +26,7 @@ public static class ZdCodec
             ZdValue.String s => Zd.EncodeString(s.Value),
             ZdValue.Array a => EncodeArray(a.Items),
             ZdValue.Map m => EncodeMap(m.Entries),
+            ZdValue.Null _ => throw new ArgumentException("zd 字节格式无 null 标签：Null 哨兵不能编码为字节，请先用 Json/Xml 等输出或替换为具体值"),
             _ => throw new ArgumentException($"未知 zd 值类型 {v.GetType().Name}"),
         };
     }

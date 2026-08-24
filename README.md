@@ -61,6 +61,34 @@ Zd.Save("out.zd", bytes);
 byte[] loaded = Zd.Load("out.zd");     // 校验魔数、去头返回正文
 ```
 
+## 格式互转（zd ↔ 常见格式）
+
+所有互转都以 `ZdValue` 为统一中转模型，经 `ZdConvert` 门面一键调用，
+已支持 **JSON / tie:data / 字节 / base64 / CSV / INI / XML**（YAML、TOML 规划中）。
+
+```csharp
+// JSON ↔ zd 值
+ZdValue v = ZdConvert.JsonToValue("""{"name":"照片","w":1920}""");
+string json = ZdConvert.ValueToJson(v);                 // 紧凑 JSON
+
+// tie:data（JSON 子集，可读输出）
+string data = ZdConvert.ValueToTieData(v);              // pretty JSON
+
+// 字节 / base64
+byte[] raw  = [0x01, 0x02, 0xFF];
+ZdValue arr = ZdConvert.BytesToValue(raw);              // zd 数组
+string b64  = ZdConvert.ValueToBase64(arr);
+
+// CSV / INI / XML / JSON→zd 字节
+ZdValue tbl = ZdConvert.CsvToValue("a,b\n1,2\n");
+ZdValue ini = ZdConvert.IniToValue("[sec]\nk=v\n");
+string xml  = ZdConvert.ValueToXml(v, "root");
+byte[] zd   = ZdConvert.JsonToBytes("""{"id":7}""");
+```
+
+> JSON 的 `null` 在 zd 中无对应标签：解析会得到 `ZdValue.Null` 哨兵（可输出回
+> `null`），但编码成 zd 字节会抛异常提示。
+
 ## 目录结构
 
 ```
@@ -69,8 +97,14 @@ DoNetZD/
 ├── src/DoNetZD/                        # 库（netstandard2.0）
 │   ├── Zd.cs                           # 原语层：编码 / 字节工具 / varint / 文件魔数
 │   ├── ZdValue.cs                      # 类型化值模型 + CLR 对象映射
-│   └── ZdCodec.cs                      # 类型化层：递归 Encode / Decode
-└── tests/DoNetZD.Tests/                # 测试：golden 字节向量 + 回环 + 文件往返
+│   ├── ZdCodec.cs                      # 类型化层：递归 Encode / Decode
+│   ├── ZdConvert.cs                    # 互转门面（JSON/字节/base64/CSV/INI/XML/tie:data）
+│   ├── JsonCodec.cs                    # JSON ↔ ZdValue
+│   ├── BytesCodec.cs                   # 字节 / base64 ↔ ZdValue
+│   ├── CsvCodec.cs                     # CSV ↔ ZdValue
+│   ├── IniCodec.cs                     # INI ↔ ZdValue
+│   └── XmlCodec.cs                     # XML ↔ ZdValue
+└── tests/DoNetZD.Tests/                # 测试：golden 字节向量 + 回环 + 格式互转
 ```
 
 ## 构建与测试
