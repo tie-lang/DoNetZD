@@ -25,6 +25,11 @@ DoNetZD 用 .NET 忠实实现了同一格式，字节布局与 tie 侧**逐字�
   全系运行，零第三方依赖。
 - **两套 API**：原语（贴近 tie `namespace zd`）+ 类型化模型（方便组装结构化数据）。
 - **格式自描述**：每值带类型标签，无外部 schema，天然支持任意嵌套与异构容器。
+- **流式 + 异步 IO**：`ZdStream` 直读写 `Stream`，`Zd.SaveAsync/LoadAsync` 异步落盘。
+- **CRC32 完整性**：`ZdCrc32` 自实现 + `Zd.SaveChecked/LoadChecked` 防篡改文件。
+- **POCO 绑定**：`ZdSerializer` + `[ZdName]`/`[ZdIgnore]` 反射映射，枚举/列表/字典/嵌套递归。
+- **查询与变换**：`ZdPath` 路径访问、`DeepEquals`/`GetHashCode`、`Merge`（RFC 7396）、`Visit` 遍历。
+- **字节可视化**：`ZdDump.Dump` 输出带偏移与类型注解的字节树。
 
 ## 使用示例
 
@@ -103,16 +108,115 @@ byte[] zd   = ZdConvert.JsonToBytes("""{"id":7}""");
 > JSON 的 `null` 在 zd 中无对应标签：解析会得到 `ZdValue.Null` 哨兵（可输出回
 > `null`），但编码成 zd 字节会抛异常提示。
 
+## 进阶能力
+
+除原语 / 类型化 / 格式互转之外，DoNetZD 还内置一组实用能力（零依赖，全部 `netstandard2.0` 可用）。
+
+### 流式编解码 + 异步 IO
+
+`ZdStream.Encode(Stream, ZdValue)` / `ZdStream.Decode(Stream)` 直接在流上读写，
+不把整个结构物化为单个 `byte[]`，适合大体积嵌套数据流过管线；输出字节与
+`ZdCodec.Encode` 逐字节一致。`Zd.SaveAsync` / `Zd.LoadAsync` 提供异步文件 IO。
+
+```csharp
+using var ms = new MemoryStream();
+ZdStream.Encode(ms, root);          // 直写流
+ms.Position = 0;
+ZdValue back = ZdStream.Decode(ms); // 直读流
+
+await Zd.SaveAsync("out.zd", body);
+byte[] body = await Zd.LoadAsync("out.zd");
+```
+
+### CRC32 校验文件
+
+`ZdCrc32.Compute`（IEEE 802.3，自实现）可独立用于任意字节校验和；
+`Zd.SaveChecked` / `Zd.LoadChecked` 写入并验证 “魔数 + 4B CRC + body” 文件，
+篡改一字节即抛 `InvalidDataException`，用于关键数据落盘完整性。
+
+```csharp
+Zd.SaveChecked("cfg.zd", body);     // 带 CRC 写入
+byte[] ok = Zd.LoadChecked("cfg.zd"); // 校验通过；篡改则抛异常
+```
+
+### POCO 反射绑定
+
+`ZdSerializer.Serialize<T>` / `Deserialize<T>` 把任意 POCO 与 zd 字节互转。
+扫描 public 字段 + 可读属性，用 `[ZdName]` 改键名、`[ZdIgnore]` 跳过成员；
+枚举↔Integer，`List<T>` / 数组 / `Dictionary<string,V>` / 嵌套 POCO 递归。
+也可经 `ZdValue.FromObject` / `value.ToObject<T>()` 直接走绑定。
+
+```csharp
+public class Config
+{
+    public int Id { get; set; }
+    [ZdName("display_name")] public string Name { get; set; } = "";
+    [ZdIgnore] public string Secret { get; set; } = "";
+    public List<int> Tags { get; set; } = new();
+}
+
+byte[] bytes = ZdSerializer.Serialize(cfg);
+Config back = ZdSerializer.Deserialize<Config>(bytes);
+
+// 或就地转
+ZdValue v = ZdValue.FromObject(cfg);   // POCO → Map（尊重特性）
+Config c2 = v.ToObject<Config>()!;      // Map → POCO
+```
+
+### 路径访问
+
+`ZdPath.Get(root, "users[0].name")` 按点分键 + `[索引]` 取嵌套值；
+支持可选 `$` 前缀与 `['带引号键']`。找不到返回 `null` / `TryGet` 返回 `false`。
+
+```csharp
+ZdValue? host = ZdPath.Get(root, "server.host");
+ZdValue? name = ZdPath.Get(root, "$.users[1].name");
+ZdPath.TryGet(root, "a.b[2].c", out var hit);
+```
+
+### 深度比较 / 合并 / 遍历
+
+`DeepEquals` 递归比较类型与值；`GetHashCode` 深度哈希（可入哈希容器）；
+`Merge(patch)` 实现 RFC 7396 合并补丁（Null 删键、同为 Map 递归、否则替换，返回新值）；
+`Visit(action)` 先序遍历整棵值树。
+
+```csharp
+bool same = a.DeepEquals(b);
+int hash = a.GetHashCode();                 // 容器深度哈希
+
+ZdValue merged = base_.Merge(patch);        // 增量更新，原值不变
+int n = 0; root.Visit(_ => n++);            // 数节点
+```
+
+### 字节可视化转储
+
+`ZdDump.Dump(bytes)` 把 zd 字节（可带魔数头）渲染为 “偏移 [十六进制] 类型 注解”
+的缩进文本树，用于调试与跨语言字节布局对账；经 `ZdConvert.Dump` 也可调用。
+
+```
+@0  [TIEDBZD v1] magic ok (8 bytes)
+@8  map(2)
+  @9  key "port":
+    @15 [0xCD] u16 8080
+  @18  key "host":
+    @24 [str 7B] "0.0.0.0"
+```
+
 ## 目录结构
 
 ```
 DoNetZD/
 ├── docs/2026-08-24-donetzd-design.md   # 设计文档（格式规格 + API 取舍）
 ├── src/DoNetZD/                        # 库（netstandard2.0）
-│   ├── Zd.cs                           # 原语层：编码 / 字节工具 / varint / 文件魔数
-│   ├── ZdValue.cs                      # 类型化值模型 + CLR 对象映射
+│   ├── Zd.cs                           # 原语层：编码 / 字节工具 / varint / 文件魔数 / 异步 IO / CRC 文件
+│   ├── ZdValue.cs                      # 类型化值模型 + CLR 对象映射 + DeepEquals/Merge/Visit/ToObject
 │   ├── ZdCodec.cs                      # 类型化层：递归 Encode / Decode
-│   ├── ZdConvert.cs                    # 互转门面（JSON/字节/base64/CSV/INI/XML/tie:data）
+│   ├── ZdStream.cs                     # 流式编解码（直读写 Stream）+ 异步文件 IO
+│   ├── ZdCrc32.cs                      # CRC32（IEEE 802.3）自实现
+│   ├── ZdDump.cs                       # zd 字节可视化转储（偏移 + 类型注解）
+│   ├── ZdPath.cs                      # 路径访问（点分键 + [索引]）
+│   ├── ZdSerializer.cs                 # POCO 反射绑定 + ZdName/ZdIgnore 特性
+│   ├── ZdConvert.cs                    # 互转门面（JSON/字节/base64/CSV/INI/XML/YAML/TOML/Dump）
 │   ├── JsonCodec.cs                    # JSON ↔ ZdValue
 │   ├── BytesCodec.cs                   # 字节 / base64 ↔ ZdValue
 │   ├── CsvCodec.cs                     # CSV ↔ ZdValue
@@ -120,13 +224,13 @@ DoNetZD/
 │   ├── XmlCodec.cs                     # XML ↔ ZdValue
 │   ├── YamlCodec.cs                    # YAML ↔ ZdValue（块/流式/缩进子集）
 │   └── TomlCodec.cs                    # TOML ↔ ZdValue（表/数组表/点分键）
-└── tests/DoNetZD.Tests/                # 测试：golden 字节向量 + 回环 + 格式互转
+└── tests/DoNetZD.Tests/                # 测试：golden 字节向量 + 回环 + 格式互转 + 流式/POCO/查询/Dump/CRC
 ```
 
 ## 构建与测试
 
 ```bash
-dotnet build DoNetZD.slnx   # 0 错误 0 警告
+dotnet build DoNetZD.slnx   # 库 0 错误
 dotnet test  DoNetZD.slnx   # 全部通过
 ```
 

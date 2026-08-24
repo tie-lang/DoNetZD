@@ -110,9 +110,134 @@ public abstract class ZdValue
                 return new Map(raw.Keys.Cast<string>().ToDictionary(
                     k => k, k => FromObject(raw[k])));
             default:
-                throw new ArgumentException($"不支持的类型 {obj.GetType().FullName}；请手动构造 ZdValue", nameof(obj));
+                // POCO / 枚举 → 反射绑定（见 ZdPoco）
+                return ZdPoco.FromPoco(obj);
         }
     }
+
+    // ==================== 深度比较 / 哈希 / 合并 / 遍历 ====================
+
+    /// <summary>递归比较两个 zd 值（类型与值都要一致）。</summary>
+    public bool DeepEquals(ZdValue? other) => DeepEquals(this, other);
+
+    private static bool DeepEquals(ZdValue? a, ZdValue? b)
+    {
+        if (ReferenceEquals(a, b)) return true;
+        if (a is null || b is null) return false;
+        switch (a)
+        {
+            case Integer ia when b is Integer ib: return ia.Value == ib.Value;
+            case Float fa when b is Float fb: return fa.Value == fb.Value;
+            case Bool ba when b is Bool bb: return ba.Value == bb.Value;
+            case Char ca when b is Char cb: return ca.Codepoint == cb.Codepoint;
+            case Trit ta when b is Trit tb: return ta.Value == tb.Value;
+            case String sa when b is String sb: return sa.Value == sb.Value;
+            case Null when b is Null: return true;
+            case Array aa when b is Array ab:
+                if (aa.Items.Count != ab.Items.Count) return false;
+                for (int i = 0; i < aa.Items.Count; i++)
+                    if (!DeepEquals(aa.Items[i], ab.Items[i])) return false;
+                return true;
+            case Map ma when b is Map mb:
+                if (ma.Entries.Count != mb.Entries.Count) return false;
+                foreach (var kv in ma.Entries)
+                {
+                    if (!mb.Entries.TryGetValue(kv.Key, out var bv)) return false;
+                    if (!DeepEquals(kv.Value, bv)) return false;
+                }
+                return true;
+            default: return false;
+        }
+    }
+
+    /// <summary>深度哈希（结合类型标签与值；容器递归组合元素哈希）。</summary>
+    public override int GetHashCode()
+    {
+        switch (this)
+        {
+            case Integer i: return Combine(1, i.Value.GetHashCode());
+            case Float f: return Combine(2, f.Value.GetHashCode());
+            case Bool b: return Combine(3, b.Value.GetHashCode());
+            case Char c: return Combine(4, c.Codepoint.GetHashCode());
+            case Trit t: return Combine(5, t.Value.GetHashCode());
+            case String s: return Combine(6, s.Value.GetHashCode());
+            case Null: return 7;
+            case Array a:
+                int ah = 8;
+                foreach (var x in a.Items) ah = Combine(ah, x.GetHashCode());
+                return ah;
+            case Map m:
+                int mh = 9;
+                foreach (var kv in m.Entries)
+                    mh = Combine(Combine(mh, kv.Key.GetHashCode()), kv.Value.GetHashCode());
+                return mh;
+            default: return base.GetHashCode();
+        }
+    }
+
+    /// <summary>
+    /// RFC 7396 风格合并补丁：返回合并后的新值（不修改本值）。
+    /// 规则：补丁为 Map 时按键合并——值为 Null 则删键；值与目标同为 Map 则递归；否则替换；
+    /// 补丁非 Map 时整体替换。常用于配置增量更新。
+    /// </summary>
+    public ZdValue Merge(ZdValue patch)
+    {
+        if (patch is null) throw new ArgumentNullException(nameof(patch));
+        if (patch is Map pm && this is Map tm)
+        {
+            var result = new Dictionary<string, ZdValue>();
+            foreach (var kv in tm.Entries)
+                result[kv.Key] = kv.Value;
+            foreach (var kv in pm.Entries)
+            {
+                if (kv.Value is Null)
+                {
+                    result.Remove(kv.Key);
+                }
+                else if (result.TryGetValue(kv.Key, out var existing) && existing is Map em && kv.Value is Map mm)
+                {
+                    result[kv.Key] = em.Merge(mm);
+                }
+                else
+                {
+                    result[kv.Key] = kv.Value;
+                }
+            }
+            return new Map(result);
+        }
+        return patch;  // 补丁非 Map → 整体替换
+    }
+
+    /// <summary>先序遍历整棵值树（先回调本值，再下钻 Array/Map 子项）。</summary>
+    public void Visit(Action<ZdValue> action)
+    {
+        if (action is null) throw new ArgumentNullException(nameof(action));
+        VisitCore(action);
+    }
+
+    private void VisitCore(Action<ZdValue> a)
+    {
+        a(this);
+        switch (this)
+        {
+            case Array arr:
+                for (int i = 0; i < arr.Items.Count; i++) arr.Items[i].VisitCore(a);
+                break;
+            case Map m:
+                foreach (var kv in m.Entries) kv.Value.VisitCore(a);
+                break;
+        }
+    }
+
+    // ==================== 转为 CLR 类型（POCO 反序列化入口）====================
+
+    /// <summary>把本值转为指定 CLR 类型（基元/列表/字典/POCO）。委托 ZdPoco。</summary>
+    public object? ToObject(Type type) => ZdPoco.ToClr(this, type);
+
+    /// <summary>把本值转为 T（基元/列表/字典/POCO）。</summary>
+    public T? ToObject<T>() => (T?)ToObject(typeof(T));
+
+    private static int Combine(int a, int b) => unchecked((a * 31) + b);
 
     /// <summary>打印直观表示（调试/日志用）。</summary>
     public override string ToString()

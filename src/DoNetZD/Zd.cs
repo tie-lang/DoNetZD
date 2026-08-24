@@ -267,4 +267,104 @@ public static class Zd
             return Array.Empty<byte>();
         }
     }
+
+    // ==================== 异步文件 IO ====================
+
+    /// <summary>异步把 zd 字节（含魔数头）写入文件。失败返回 false。</summary>
+    public static async Task<bool> SaveAsync(string path, byte[] bytes)
+    {
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 4096, useAsync: true);
+            await fs.WriteAsync(Magic, 0, Magic.Length).ConfigureAwait(false);
+            byte[] body = bytes ?? Array.Empty<byte>();
+            await fs.WriteAsync(body, 0, body.Length).ConfigureAwait(false);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>异步读取 zd 文件：校验魔数头、去头返回正文；非 zd 文件返回空数组。</summary>
+    public static async Task<byte[]> LoadAsync(string path)
+    {
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, useAsync: true);
+            using var ms = new MemoryStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = await fs.ReadAsync(buf, 0, buf.Length).ConfigureAwait(false)) > 0)
+                ms.Write(buf, 0, n);
+            byte[] data = ms.ToArray();
+            if (!IsZd(data))
+                return Array.Empty<byte>();
+            var body = new byte[data.Length - Magic.Length];
+            Buffer.BlockCopy(data, Magic.Length, body, 0, body.Length);
+            return body;
+        }
+        catch
+        {
+            return Array.Empty<byte>();
+        }
+    }
+
+    // ==================== CRC32 校验文件（魔数 + CRC + body）====================
+    // 与普通 Save/Load 区别：在魔数头后多 4 字节大端 CRC32（覆盖 body）。
+    // IsZd 仅认魔数前缀，所以 CRC 变体文件仍可通过 IsZd，但需用 LoadChecked 读取。
+
+    /// <summary>把 zd 字节 + CRC32 校验写入文件（魔数 + 4B CRC + body）。</summary>
+    public static bool SaveChecked(string path, byte[] bytes)
+    {
+        try
+        {
+            byte[] body = bytes ?? Array.Empty<byte>();
+            uint crc = ZdCrc32.Compute(body);
+            byte[] file = Concat(Magic, Concat(WriteU32Be(crc), body));
+            File.WriteAllBytes(path, file);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>读 CRC 校验 zd 文件并验证；失败抛 <see cref="InvalidDataException"/>。</summary>
+    public static byte[] LoadChecked(string path)
+    {
+        if (!TryLoadChecked(path, out byte[]? body, out string? error))
+            throw new InvalidDataException(error);
+        return body!;
+    }
+
+    /// <summary>尝试读 CRC 校验 zd 文件；失败返回 false 并带错误信息。</summary>
+    public static bool TryLoadChecked(string path, out byte[]? body, out string? error)
+    {
+        body = null;
+        error = null;
+        try
+        {
+            byte[] data = File.ReadAllBytes(path);
+            if (!IsZd(data)) { error = "非 zd 文件（魔数不匹配）"; return false; }
+            if (data.Length < Magic.Length + 4) { error = "zd 校验文件过短（缺 CRC）"; return false; }
+            uint stored = ReadU32Be(data, Magic.Length);
+            byte[] payload = new byte[data.Length - Magic.Length - 4];
+            Buffer.BlockCopy(data, Magic.Length + 4, payload, 0, payload.Length);
+            uint actual = ZdCrc32.Compute(payload);
+            if (stored != actual)
+            {
+                error = $"CRC 校验失败：期望 0x{stored:X8}，实际 0x{actual:X8}";
+                return false;
+            }
+            body = payload;
+            return true;
+        }
+        catch (Exception ex) { error = ex.Message; return false; }
+    }
+
+    internal static uint ReadU32Be(byte[] b, int off)
+        => (uint)((b[off] << 24) | (b[off + 1] << 16) | (b[off + 2] << 8) | b[off + 3]);
 }

@@ -64,4 +64,8 @@ public static class ZdConvert
     public static byte[] JsonToBytes(string json) => ZdCodec.Encode(JsonCodec.Parse(json));
     /// <summary>zd 字节 → JSON 文本。</summary>
     public static string BytesToJson(byte[] zdBytes) => JsonCodec.Serialize(ZdCodec.Decode(zdBytes));
+
+    // ---- 调试 / 字节可视化 ----
+    /// <summary>把 zd 字节（可带魔数头）转储为“偏移 + 类型注解”的可读文本。</summary>
+    public static string Dump(byte[] zdBytes) => ZdDump.Dump(zdBytes);
 }
