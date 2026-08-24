@@ -1,5 +1,5 @@
 # Open Source License
-**Version 1.0**
+**Version 1.1**
 
 ```
 Copyright (c) 2026 TIE-LANG organization. All rights reserved.
@@ -13,19 +13,19 @@ This license governs the use, modification, and distribution of the **source cod
 
 > **Use of this Software's source code** — copying, incorporating, redistributing, or otherwise exercising the rights granted under this license over the Software itself. Such use is subject to the attribution obligations set forth in Section 3.
 >
-> **Use of the programming language to develop software** — authoring Your own programs in the programming language provided by this Software and compiling them with its compiler. The resulting programs are Your own works and are **not** governed by this license. **You are not required to include any copyright notice or a copy of this license in Your own software developed in the programming language**, except to the extent You incorporate this Software's source code as provided in Section 3.
+> **Use of this Software to create programs** — creating programs Users author for or with this Software. The resulting programs are Users' own works and are **not** governed by this license. **Users are not required to include any copyright notice or a copy of this license in programs They create for or with this Software**, except to the extent They incorporate this Software's source code as provided in Section 3.
 
 By using, copying, modifying, or distributing any portion of this Software, you agree to be bound by the terms of this license. If you do not agree to these terms, you are not authorized to use the Software.
 
 ## Section 1 — Definitions
 
-1.1 **"The Software"** means, collectively, (a) the programming language defined and implemented by the TIE-LANG organization and distributed under this license, and (b) the original and modified copies, in source or object form, of the software libraries, tools, documentation, examples, and graphical assets created by the TIE-LANG organization and distributed under this license across its official repositories.
+1.1 **"The Software"** means, collectively, (a) the software libraries and tools created by the TIE-LANG organization and distributed under this license (including, for the avoidance of doubt, the DoNetZD library), and (b) the original and modified copies, in source or object form, of the software libraries, tools, documentation, examples, and graphical assets created by the TIE-LANG organization and distributed under this license across its official repositories.
 
-1.2 **"Software source code"** means the copies described in Section 1.1(b), whether in source or object form. It does not include programs authored by You in the programming language described in Section 1.1(a).
+1.2 **"Software source code"** means the copies described in Section 1.1, whether in source or object form. It does not include programs You create for or with this Software.
 
 1.3 **"You"** (or **"Your"**) means the individual or legal entity exercising permissions granted by this license.
 
-1.4 **"Derivative Work"** means any work based upon the Software, whether in source or object form, that contains or incorporates a portion of the Software, whether verbatim or with modifications, translations, or adaptations. **A program authored in the programming language that does not incorporate or reproduce Software source code is not a Derivative Work.**
+1.4 **"Derivative Work"** means any work based upon the Software, whether in source or object form, that contains or incorporates a portion of the Software, whether verbatim or with modifications, translations, or adaptations. **A program created for or with this Software that does not incorporate or reproduce Software source code is not a Derivative Work.**
 
 1.5 **"Contribution"** means any original work of authorship, including any modification or addition to the Software, intentionally submitted to the TIE-LANG organization for inclusion in the Software.
 
@@ -49,7 +49,7 @@ This license is expressly **permissive** with respect to the Software source cod
 
 ## Section 3 — Conditions of Use and Distribution of Software source code
 
-The conditions in this section apply **solely** to Your use and distribution of the **Software source code**, as defined in Section 1.2, and Derivative Works thereof. **They do not apply to programs You author in the programming language.** A program written in the programming language may be distributed royalty-free and without any obligation to include copyright notices or this license, provided it does not reproduce or incorporate Software source code.
+The conditions in this section apply **solely** to Your use and distribution of the **Software source code**, as defined in Section 1.2, and Derivative Works thereof. **They do not apply to programs You create for or with this Software.** A program created for or with this Software may be distributed royalty-free and without any obligation to include copyright notices or this license, provided it does not reproduce or incorporate Software source code.
 
 3.1 **Attribution on Use and Distribution of Software source code — Mandatory.** Every use of the Software source code, whether in source or object form, whether verbatim or modified, and whether or not distributed to others, must be accompanied by:
 
@@ -89,7 +89,7 @@ TO THE FULLEST EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE TIE-LAN
 
 7.2 **Permitted Use** — You may, without prior written authorization from the TIE-LANG organization:
 
-> (a) use the Software to compile Your own programs and distribute the resulting binaries to any recipient, under Your own terms;
+> (a) use this Software to create Your own programs and distribute the resulting works to any recipient, under Your own terms;
 >
 > (b) nominatively and descriptively refer to the TIE Brand in documentation, source-code comments, presentations, and truthful factual statements, including statements of interoperability or compatibility (for example, "built with tie", "targets tie"); and
 >
@@ -119,7 +119,7 @@ TO THE FULLEST EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE TIE-LAN
 
 9.2 **Consequence of Breach of Section 3** — Failure to comply with the mandatory attribution obligations in Section 3 (applicable to the use of Software source code) is a material breach of this license. Upon such breach, the rights granted in Section 2 shall terminate immediately, and You shall cease all use of the Software source code until the noncompliance is cured.
 
-9.3 Notwithstanding the foregoing, **no breach of this license shall be deemed to occur solely by virtue of Your use or distribution of programs authored in the programming language** that do not incorporate or reproduce Software source code.
+9.3 Notwithstanding the foregoing, **no breach of this license shall be deemed to occur solely by virtue of Your use or distribution of programs created for or with this Software** that do not incorporate or reproduce Software source code.
 
 9.4 Upon termination of Your rights, Your license to use, modify, and redistribute the Software ceases, but Sections 5, 6, 7, and 12 shall survive termination. If You have sublicensed any Derivative Work prior to termination, such sublicenses shall survive termination only to the extent that they do not violate the terms of this license.
 
