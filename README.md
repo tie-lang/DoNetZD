@@ -1,0 +1,86 @@
+# DoNetZD（DNZD）
+
+**用 C# 逐字节复刻 tie 语言 `tie:zd` 二进制序列化格式**的独立库，供 .NET 宿主与
+tie 插件之间做跨语言结构化数据封包。
+
+## 它能做什么
+
+`tie:zd` 是 tie 工具链自带的二进制序列化格式（见 tie 仓库
+`tieDB/persist/zd.tie`），MessagePack 风格（类型标签 + 紧凑编码）叠 Protobuf 风格
+varint，能够把整数 / 浮点 / 布尔 / 字符 / 三值 / 字符串 / 数组 / map 紧凑地写成字节。
+
+DoNetZD 用 .NET 忠实实现了同一格式，字节布局与 tie 侧**逐字节一致**：
+
+- **原语层**：`Zd.EncodeI64 / EncodeF64 / EncodeString / EncodeArrayHeader …` 与
+  `Zd.Save / Load / IsZd`（带 `"TIEDBZD"` 魔数头），适合需要字节级精确控制的场景。
+- **类型化层**：`ZdValue` 模型 + `ZdCodec.Encode / Decode` 递归编解码，并支持直接把
+  CLR 对象（`long/int/bool/string/List/Dictionary` 等）映射成 zd 值，开箱即用。
+
+写任何需要与 tie 程序互换数据的 .NET 程序时，用同一个 zd 格式就能无缝对接。
+
+## 特性
+
+- **跨语言互通**：字节布局采样自 tie:zd 定稿，golden 字节向量测试作为互通护栏。
+- **兼容老框架**：目标框架 `netstandard2.0`，可在 .NET Framework / .NET Core / .NET
+  全系运行，零第三方依赖。
+- **两套 API**：原语（贴近 tie `namespace zd`）+ 类型化模型（方便组装结构化数据）。
+- **格式自描述**：每值带类型标签，无外部 schema，天然支持任意嵌套与异构容器。
+
+## 使用示例
+
+```csharp
+using DoNetZD;
+
+// 原语：手写字节精确控制
+byte[] n = Zd.EncodeI64(300);          // 0xCD 0x01 0x2C（u16 大端，紧凑分层）
+
+// 类型化：直接编解码结构化对象
+var root = new ZdValue.Map(new Dictionary<string, ZdValue>
+{
+    ["width"] = new ZdValue.Integer(1920),
+    ["name"]  = new ZdValue.String("照片"),
+    ["list"]  = new ZdValue.Array(new ZdValue[]
+    {
+        new ZdValue.Integer(1),
+        new ZdValue.Float(2.5),
+    }),
+});
+byte[] bytes = ZdCodec.Encode(root);   // 写成 zd 字节
+ZdValue back = ZdCodec.Decode(bytes);  // 读回
+
+// 或直接映射 CLR 对象
+byte[] enc = ZdCodec.Encode(ZdValue.FromObject(new Dictionary<string, object?>
+{
+    ["id"]    = 123,
+    ["ratio"] = 0.5,
+    ["flags"] = new object?[] { true, false, 7 },
+}));
+
+// 文件（带 TIEDBZD 魔数头）
+Zd.Save("out.zd", bytes);
+byte[] loaded = Zd.Load("out.zd");     // 校验魔数、去头返回正文
+```
+
+## 目录结构
+
+```
+DoNetZD/
+├── docs/2026-08-24-donetzd-design.md   # 设计文档（格式规格 + API 取舍）
+├── src/DoNetZD/                        # 库（netstandard2.0）
+│   ├── Zd.cs                           # 原语层：编码 / 字节工具 / varint / 文件魔数
+│   ├── ZdValue.cs                      # 类型化值模型 + CLR 对象映射
+│   └── ZdCodec.cs                      # 类型化层：递归 Encode / Decode
+└── tests/DoNetZD.Tests/                # 测试：golden 字节向量 + 回环 + 文件往返
+```
+
+## 构建与测试
+
+```bash
+dotnet build DoNetZD.slnx   # 0 错误 0 警告
+dotnet test  DoNetZD.slnx   # 全部通过
+```
+
+## 参考
+
+- tie:zd 官方实现：`F:\Projects\tie-repo\tie-main\tieDB\persist\zd.tie`
+- 格式规范：`tieDB` 设计文档 §2（MessagePack + Protobuf 混合思路）
