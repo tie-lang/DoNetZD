@@ -66,6 +66,18 @@ byte[] loaded = Zd.Load("out.zd");     // 校验魔数、去头返回正文
 所有互转都以 `ZdValue` 为统一中转模型，经 `ZdConvert` 门面一键调用，
 已支持 **JSON / tie:data / 字节 / base64 / CSV / INI / XML / YAML / TOML**。
 
+| 格式 | 进（→ ZdValue） | 出（ZdValue →） | 支持内容 | 边界 / 说明 |
+|---|---|---|---|---|
+| JSON | `JsonToValue` | `ValueToJson` | object / array / 字符串 / 数字 / 布尔 / null | 完整解析器 + 紧凑/可读输出；null→`Null` 哨兵 |
+| tie:data | `TieDataToValue` | `ValueToTieData` | 同 JSON（JSON 子集） | 等价 JSON 解析；输出为 pretty JSON |
+| 字节 | `BytesToValue` | `ValueToBytes` | byte[] ⇄ zd 数组(0..255) | 每字节一个 Integer |
+| base64 | `Base64ToValue` | `ValueToBase64` | base64 ⇄ zd 数组 | 经字节中转 |
+| CSV | `CsvToValue` | `ValueToCsv` | 二维表（行/列，格为 String） | RFC 4180：引号/逗号/换行转义；表头算一行 |
+| INI | `IniToValue` | `ValueToIni` | 段 → 键值 Map | 全局段 key=`""`；注释 `;` `#` |
+| XML | `XmlToValue` | `ValueToXml` | 属性/子元素/文本/重复元素→数组 | 根需指定名；`@属性`、`#text` 约定 |
+| YAML | `YamlToValue` | `ValueToYaml` | 块映射/序列、流式 `[]{}`、块标量 | 缩进子集；不解析锚点/别名/标签 |
+| TOML | `TomlToValue` | `ValueToToml` | 表/数组表/点分键/数组/内联表 | 日期/时间存为 String；根为 Map |
+
 ```csharp
 // JSON ↔ zd 值
 ZdValue v = ZdConvert.JsonToValue("""{"name":"照片","w":1920}""");
