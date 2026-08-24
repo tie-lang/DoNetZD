@@ -163,15 +163,26 @@ ZdValue v = ZdValue.FromObject(cfg);   // POCO → Map（尊重特性）
 Config c2 = v.ToObject<Config>()!;      // Map → POCO
 ```
 
-### 路径访问
+### 路径访问与写回
 
 `ZdPath.Get(root, "users[0].name")` 按点分键 + `[索引]` 取嵌套值；
 支持可选 `$` 前缀与 `['带引号键']`。找不到返回 `null` / `TryGet` 返回 `false`。
+
+`ZdPath.Set(root, path, value)` 按路径写回，返回新的根（不可变重建，原根不变，
+用 `root = ZdPath.Set(root, path, v)` 写回）。规则：
+Map 键叶子可新增/替换、中间键缺失自动建链；Array 叶子处 `i==Count` 追加、
+越界失败；段类型不匹配失败。纯 Key 链也支持从 `null` 根建树。
+`TrySet` 返回 bool，避免抛异常。
 
 ```csharp
 ZdValue? host = ZdPath.Get(root, "server.host");
 ZdValue? name = ZdPath.Get(root, "$.users[1].name");
 ZdPath.TryGet(root, "a.b[2].c", out var hit);
+
+root = ZdPath.Set(root, "server.port", new ZdValue.Integer(9090));  // 替换
+root = ZdPath.Set(root, "cache.ttl", new ZdValue.Integer(600));     // 中间 cache 自动创建
+root = ZdPath.Set(root, "tags[1]", new ZdValue.String("X"));        // 数组元素替换
+ZdPath.TrySet(root, "users[9]", new ZdValue.Integer(1), out _);     // 越界 → false
 ```
 
 ### 深度比较 / 合并 / 遍历

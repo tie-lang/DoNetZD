@@ -121,6 +121,97 @@ public class QueryTests
         Assert.IsType<ZdValue.Integer>(merged);
     }
 
+    // ---- Set / TrySet（路径写回）----
+
+    [Fact]
+    public void Set_ReplaceLeaf()
+    {
+        ZdValue r = Root();
+        ZdValue updated = ZdPath.Set(r, "server.port", new ZdValue.Integer(9090));
+        Assert.Equal(9090L, ((ZdValue.Integer)ZdPath.Get(updated, "server.port")!).Value);
+        // 原根不变（不可变）
+        Assert.Equal(8080L, ((ZdValue.Integer)ZdPath.Get(r, "server.port")!).Value);
+    }
+
+    [Fact]
+    public void Set_AddNewKey_AndStoreBack()
+    {
+        ZdValue r = Root();
+        r = ZdPath.Set(r, "server.extra", new ZdValue.String("x"));   // 写回
+        Assert.Equal("x", ((ZdValue.String)ZdPath.Get(r, "server.extra")!).Value);
+    }
+
+    [Fact]
+    public void Set_CreatesIntermediateMaps()
+    {
+        ZdValue r = Root();
+        ZdValue updated = ZdPath.Set(r, "cache.ttl", new ZdValue.Integer(600));
+        Assert.Equal(600L, ((ZdValue.Integer)ZdPath.Get(updated, "cache.ttl")!).Value);
+        // 中间 cache 键被自动创建
+        Assert.True(((ZdValue.Map)ZdPath.Get(updated, "cache")!).Entries.ContainsKey("ttl"));
+        // 原根无 cache
+        Assert.Null(ZdPath.Get(r, "cache"));
+    }
+
+    [Fact]
+    public void Set_ReplaceArrayElement()
+    {
+        ZdValue r = Root();
+        ZdValue updated = ZdPath.Set(r, "users[0].age", new ZdValue.Integer(99));
+        Assert.Equal(99L, ((ZdValue.Integer)ZdPath.Get(updated, "users[0].age")!).Value);
+        Assert.Equal(30L, ((ZdValue.Integer)ZdPath.Get(r, "users[0].age")!).Value);
+    }
+
+    [Fact]
+    public void Set_AppendToArray_AtCountIndex()
+    {
+        var r = new ZdValue.Map(new Dictionary<string, ZdValue>
+        {
+            ["arr"] = new ZdValue.Array(new ZdValue[] { new ZdValue.Integer(1), new ZdValue.Integer(2) }),
+        });
+        ZdValue updated = ZdPath.Set(r, "arr[2]", new ZdValue.Integer(3));
+        var arr = (ZdValue.Array)ZdPath.Get(updated, "arr")!;
+        Assert.Equal(3, arr.Items.Count);
+        Assert.Equal(3L, ((ZdValue.Integer)arr.Items[2]).Value);
+    }
+
+    [Fact]
+    public void TrySet_Failures()
+    {
+        ZdValue r = Root();
+        // 数组叶子越界（i > Count）
+        Assert.False(ZdPath.TrySet(r, "users[9].name", new ZdValue.String("x"), out _));
+        // 中间数组越界
+        Assert.False(ZdPath.TrySet(r, "users[5].x", new ZdValue.String("x"), out _));
+        // 段类型不匹配：Key 落在 Array 上
+        Assert.False(ZdPath.TrySet(r, "users.name", new ZdValue.String("x"), out _));
+        // 段类型不匹配：Index 落在 Map 上
+        Assert.False(ZdPath.TrySet(r, "server[0]", new ZdValue.String("x"), out _));
+        // 非容器（标量）路径上继续下钻
+        Assert.False(ZdPath.TrySet(r, "server.port.deep", new ZdValue.String("x"), out _));
+    }
+
+    [Fact]
+    public void Set_BuildTreeFromNullRoot()
+    {
+        // 纯 Key 链：null 根也能建链（根自动成为 Map）
+        Assert.True(ZdPath.TrySet(null!, "a.b.c", new ZdValue.Integer(1), out ZdValue? root));
+        Assert.Equal(1L, ((ZdValue.Integer)ZdPath.Get(root!, "a.b.c")!).Value);
+    }
+
+    [Fact]
+    public void Set_EmptyPath_ReplacesRoot()
+    {
+        ZdValue v = new ZdValue.Integer(7);
+        Assert.Same(v, ZdPath.Set(Root(), "", v));
+    }
+
+    [Fact]
+    public void Set_Throws_OnUnwritablePath()
+    {
+        Assert.Throws<InvalidOperationException>(() => ZdPath.Set(Root(), "users[9]", new ZdValue.Integer(1)));
+    }
+
     // ---- Visit ----
 
     [Fact]

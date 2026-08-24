@@ -56,6 +56,105 @@ public static class ZdPath
         return cur != null;
     }
 
+    // ==================== 路径写回（Set / Mutate）====================
+
+    /// <summary>
+    /// 在路径处写入值，返回新的根（不可变重建，原根不变；写回用
+    /// <c>root = ZdPath.Set(root, path, value);</c>）。
+    /// 规则：
+    ///   - 空路径等价于整体替换根；
+    ///   - Map 键：叶子键新增/替换；中间键缺失时自动创建空 Map（建链）；
+    ///   - Array 索引：叶子处 i==Count 追加、i&lt;Count 替换、i&gt;Count 越界失败；
+    ///     中间处 i 越界失败；
+    ///   - 段类型不匹配（Key 落在 Array / Index 落在 Map）失败。
+    /// 失败抛 <see cref="InvalidOperationException"/>；需要忽略失败用 <see cref="TrySet"/>。
+    /// </summary>
+    public static ZdValue Set(ZdValue root, string path, ZdValue value)
+    {
+        if (!TrySet(root, path, value, out ZdValue? result))
+            throw new InvalidOperationException($"路径不可写：{path}");
+        return result!;
+    }
+
+    /// <summary>按路径写回；成功返回 true 并把新根写入 <paramref name="result"/>。</summary>
+    public static bool TrySet(ZdValue root, string path, ZdValue value, out ZdValue? result)
+    {
+        if (value is null)
+            throw new ArgumentNullException(nameof(value));
+        if (string.IsNullOrEmpty(path))
+        {
+            result = value;
+            return true;
+        }
+        Seg[] segs = Parse(path).ToArray();
+        if (segs.Length == 0)
+        {
+            result = value;
+            return true;
+        }
+        ZdValue? r = SetCore(root, segs, 0, value);
+        result = r;
+        return r != null;
+    }
+
+    private static ZdValue? SetCore(ZdValue? node, Seg[] segs, int idx, ZdValue value)
+    {
+        bool last = idx == segs.Length - 1;
+        switch (segs[idx])
+        {
+            case Key key:
+                ZdValue.Map? oldMap = node as ZdValue.Map;
+                var nm = new Dictionary<string, ZdValue>();
+                if (oldMap != null)
+                {
+                    foreach (var kv in oldMap.Entries)
+                        nm[kv.Key] = kv.Value;
+                }
+                else if (node != null)
+                {
+                    return null;   // 现有节点不是 Map → 失败
+                }
+                if (last)
+                {
+                    nm[key.Name] = value;
+                    return new ZdValue.Map(nm);
+                }
+                if (!nm.TryGetValue(key.Name, out ZdValue? sub))
+                {
+                    sub = new ZdValue.Map(new Dictionary<string, ZdValue>());
+                    nm[key.Name] = sub;
+                }
+                ZdValue? newSub = SetCore(sub, segs, idx + 1, value);
+                if (newSub == null)
+                    return null;
+                nm[key.Name] = newSub;
+                return new ZdValue.Map(nm);
+            case Index ix:
+                if (node is not ZdValue.Array a)
+                    return null;
+                var items = new List<ZdValue>(a.Items);
+                if (last)
+                {
+                    if (ix.I < 0 || ix.I > items.Count)
+                        return null;                 // 越界（允许 == Count 追加）
+                    if (ix.I == items.Count)
+                        items.Add(value);
+                    else
+                        items[ix.I] = value;
+                    return new ZdValue.Array(items);
+                }
+                if (ix.I < 0 || ix.I >= items.Count)
+                    return null;
+                ZdValue? newItem = SetCore(items[ix.I], segs, idx + 1, value);
+                if (newItem == null)
+                    return null;
+                items[ix.I] = newItem;
+                return new ZdValue.Array(items);
+            default:
+                return null;
+        }
+    }
+
     private abstract class Seg { }
     private sealed class Key : Seg { public string Name; public Key(string n) => Name = n; }
     private sealed class Index : Seg { public int I; public Index(int i) => I = i; }
