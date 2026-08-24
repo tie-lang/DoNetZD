@@ -47,6 +47,18 @@ public static class ZdConvert
     /// <summary>ZdValue → XML 文本（rootName 为根元素名）。</summary>
     public static string ValueToXml(ZdValue value, string rootName) => XmlCodec.ToXml(value, rootName);
 
+    // ---- YAML ----
+    /// <summary>YAML 文本 → ZdValue。</summary>
+    public static ZdValue YamlToValue(string yaml) => YamlCodec.FromYaml(yaml);
+    /// <summary>ZdValue → YAML 文本（块式）。</summary>
+    public static string ValueToYaml(ZdValue value) => YamlCodec.ToYaml(value);
+
+    // ---- TOML ----
+    /// <summary>TOML 文本 → ZdValue（根 Map）。</summary>
+    public static ZdValue TomlToValue(string toml) => TomlCodec.FromToml(toml);
+    /// <summary>ZdValue → TOML 文本。</summary>
+    public static string ValueToToml(ZdValue value) => TomlCodec.ToToml(value);
+
     // ---- 便捷：任意格式 → zd 字节，zd 字节 → 任意格式 ----
     /// <summary>JSON 文本 → zd 字节（经 ZdValue 中转；含 null 时抛异常）。</summary>
     public static byte[] JsonToBytes(string json) => ZdCodec.Encode(JsonCodec.Parse(json));

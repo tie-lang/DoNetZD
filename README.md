@@ -64,7 +64,7 @@ byte[] loaded = Zd.Load("out.zd");     // 校验魔数、去头返回正文
 ## 格式互转（zd ↔ 常见格式）
 
 所有互转都以 `ZdValue` 为统一中转模型，经 `ZdConvert` 门面一键调用，
-已支持 **JSON / tie:data / 字节 / base64 / CSV / INI / XML**（YAML、TOML 规划中）。
+已支持 **JSON / tie:data / 字节 / base64 / CSV / INI / XML / YAML / TOML**。
 
 ```csharp
 // JSON ↔ zd 值
@@ -79,10 +79,12 @@ byte[] raw  = [0x01, 0x02, 0xFF];
 ZdValue arr = ZdConvert.BytesToValue(raw);              // zd 数组
 string b64  = ZdConvert.ValueToBase64(arr);
 
-// CSV / INI / XML / JSON→zd 字节
+// CSV / INI / XML / YAML / TOML / JSON→zd 字节
 ZdValue tbl = ZdConvert.CsvToValue("a,b\n1,2\n");
 ZdValue ini = ZdConvert.IniToValue("[sec]\nk=v\n");
 string xml  = ZdConvert.ValueToXml(v, "root");
+ZdValue yml = ZdConvert.YamlToValue("name: 张三\nage: 30\n");
+ZdValue tml = ZdConvert.TomlToValue("[server]\nhost = \"h\"\n");
 byte[] zd   = ZdConvert.JsonToBytes("""{"id":7}""");
 ```
 
@@ -103,7 +105,9 @@ DoNetZD/
 │   ├── BytesCodec.cs                   # 字节 / base64 ↔ ZdValue
 │   ├── CsvCodec.cs                     # CSV ↔ ZdValue
 │   ├── IniCodec.cs                     # INI ↔ ZdValue
-│   └── XmlCodec.cs                     # XML ↔ ZdValue
+│   ├── XmlCodec.cs                     # XML ↔ ZdValue
+│   ├── YamlCodec.cs                    # YAML ↔ ZdValue（块/流式/缩进子集）
+│   └── TomlCodec.cs                    # TOML ↔ ZdValue（表/数组表/点分键）
 └── tests/DoNetZD.Tests/                # 测试：golden 字节向量 + 回环 + 格式互转
 ```
 
