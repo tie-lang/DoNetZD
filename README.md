@@ -84,3 +84,15 @@ dotnet test  DoNetZD.slnx   # 全部通过
 
 - tie:zd 官方实现：`F:\Projects\tie-repo\tie-main\tieDB\persist\zd.tie`
 - 格式规范：`tieDB` 设计文档 §2（MessagePack + Protobuf 混合思路）
+
+## 许可证
+
+DoNetZD 采用 **TIE-LANG Open Source License v1.0** 发布，归 **TIE-LANG organization**
+所有。本项目的源码（含本仓库所有 `.cs` / 文档 / 构建文件）即许可证定义的
+"The Software" 的组成部分，使用、修改、分发须遵守其第 3 节规定的归属义务（保留
+版权声明、随附或链接到许可证全文）。
+
+> 依据该许可证，你使用 tie 语言编写的**你的程序**不受本许可证约束，也无需附带
+> 版权声明或许可证副本；但一旦复制或并入 DoNetZD 的源码，即适用上述条款。
+
+完整条款见 `LICENSE`。
