@@ -4,10 +4,28 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
     <RootNamespace>DoNetZD</RootNamespace>
     <AssemblyName>DoNetZD</AssemblyName>
-    <LangVersion>latest</LangVersion>
-    <Version>1.0.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+
+    <!-- NuGet 打包（版本 1.0.0） -->
+    <Version>1.0.0</Version>
+    <PackageId>DoNetZD</PackageId>
+    <Description>用 C# 逐字节复刻 tie 语言 tie:zd 二进制序列化格式的独立库，供 .NET 宿主与 tie 插件跨语言封包；附 zd ↔ JSON/YAML/TOML/CSV/INI/XML 等九大格式互转、流式/异步 IO、CRC32、POCO 绑定、路径查询与转储。</Description>
+    <PackageTags>tie;zd;serialization;fptp;interop</PackageTags>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageProjectUrl>https://github.com/tie-lang/DoNetZD</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/tie-lang/DoNetZD.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <IsPackable>true</IsPackable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
 </Project>
