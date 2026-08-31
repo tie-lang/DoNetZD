@@ -207,7 +207,8 @@ public static class ZdStream
         try
         {
             using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 4096, useAsync: true);
-            await fs.WriteAsync(Zd.Magic, 0, Zd.Magic.Length).ConfigureAwait(false);
+            byte[] header = Zd.V2Header(0);
+            await fs.WriteAsync(header, 0, header.Length).ConfigureAwait(false);
             byte[] body = bytes ?? Array.Empty<byte>();
             await fs.WriteAsync(body, 0, body.Length).ConfigureAwait(false);
             return true;
@@ -230,11 +231,9 @@ public static class ZdStream
             while ((n = await fs.ReadAsync(buf, 0, buf.Length).ConfigureAwait(false)) > 0)
                 ms.Write(buf, 0, n);
             byte[] data = ms.ToArray();
-            if (!Zd.IsZd(data))
+            if (Zd.DetectVersion(data) == ZdVersion.Unknown)
                 return Array.Empty<byte>();
-            var body = new byte[data.Length - Zd.Magic.Length];
-            Buffer.BlockCopy(data, Zd.Magic.Length, body, 0, body.Length);
-            return body;
+            return Zd.ExtractBody(data);
         }
         catch
         {

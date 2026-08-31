@@ -15,6 +15,17 @@ namespace DoNetZD;
 ///   tie 扩展 0xc4 char(i32 BE) /0xc5 trit(i8) /0xc6 tuple；record 字段 = varint tag。
 ///   varint 为 Protobuf 7 位分组、0x80 续位；文件魔数头 8 字节 "TIEDBZD"+v1。
 /// </summary>
+/// <summary>检测到的 zd 头版本。</summary>
+public enum ZdVersion
+{
+    /// <summary>非法 / 非 zd 数据。</summary>
+    Unknown = 0,
+    /// <summary>v1（8 字节头："TIEDBZD" + 0x01），仅读取兼容。</summary>
+    V1 = 1,
+    /// <summary>v2（10 字节头：魔数 9 + flags 1）。</summary>
+    V2 = 2,
+}
+
 public static class Zd
 {
     // ---- 类型标签 ----
@@ -46,11 +57,54 @@ public static class Zd
     internal const byte TagMap16 = 0xDE;
     internal const byte TagMap32 = 0xDF;
 
-    // ---- 文件魔数头 "TIEDBZD" + v1 ----
-    internal static readonly byte[] Magic = { 0x54, 0x49, 0x45, 0x44, 0x42, 0x5A, 0x44, 0x01 };
+    // ---- 文件魔数头 ----
+    /// <summary>前 7 字节魔数 "TIEDBZD"（版本字节前缀）。</summary>
+    internal static readonly byte[] MagicPrefix = { 0x54, 0x49, 0x45, 0x44, 0x42, 0x5A, 0x44 };
 
-    /// <summary>文件魔数头副本（"TIEDBZD"+v1，8 字节）。</summary>
+    /// <summary>v1 头（8 字节）："TIEDBZD" + 版本 0x01。仅读取兼容。</summary>
+    internal static readonly byte[] MagicV1 = { 0x54, 0x49, 0x45, 0x44, 0x42, 0x5A, 0x44, 0x01 };
+
+    /// <summary>v2 头（9 字节）："TIEDBZD" + base48 2 位版本 "02" = [0][2]。不含 flags 字节。</summary>
+    internal static readonly byte[] MagicV2 = { 0x54, 0x49, 0x45, 0x44, 0x42, 0x5A, 0x44, 0x00, 0x02 };
+
+    /// <summary>当前活动魔数 = v2（9 字节，不含 flags 字节）。</summary>
+    internal static readonly byte[] Magic = MagicV2;
+
+    /// <summary>v1 头长（字节）。</summary>
+    internal const int V1HeaderLength = 8;
+    /// <summary>v2 头长（字节）＝ 魔数 9 + flags 1。</summary>
+    internal const int V2HeaderLength = 10;
+
+    // ---- v2 flags 字节位（位于 v2 头第 10 字节，bit0-bit4 收敛自规范 §2，bit5-6 扩展）----
+    /// <summary>字符串字典/引用位（bit0，值 1）。</summary>
+    public const byte FlagDict = 1;
+    /// <summary>列式容器位（bit1，值 2）。</summary>
+    public const byte FlagColumnar = 2;
+    /// <summary>扩展类型位（bit2，值 4）。</summary>
+    public const byte FlagExt = 4;
+    /// <summary>流式分块位（bit3，值 8）。</summary>
+    public const byte FlagStream = 8;
+    /// <summary>压缩变体位（bit4，值 16）。</summary>
+    public const byte FlagCompressed = 16;
+    /// <summary>Schema 段位（bit5，值 32，扩展）。</summary>
+    public const byte FlagSchema = 32;
+    /// <summary>内容哈希段位（bit6，值 64，扩展）。</summary>
+    public const byte FlagHash = 64;
+
+    /// <summary>文件魔数头副本（"TIEDBZD"+base48"02"，9 字节）。</summary>
     public static byte[] MagicHeader => (byte[])Magic.Clone();
+
+    /// <summary>v1 头副本（"TIEDBZD"+0x01，8 字节），仅供写兼容测试/构造 v1 文件。</summary>
+    public static byte[] V1Header => (byte[])MagicV1.Clone();
+
+    /// <summary>构造 v2 完整文件头（魔数 9 + flags 1，共 10 字节）。</summary>
+    public static byte[] V2Header(byte flags)
+    {
+        var h = new byte[V2HeaderLength];
+        Buffer.BlockCopy(MagicV2, 0, h, 0, MagicV2.Length);
+        h[MagicV2.Length] = flags;
+        return h;
+    }
 
     // ==================== 字节工具 ====================
 
@@ -220,27 +274,82 @@ public static class Zd
     /// <summary>record 字段标签：varint(field_number&lt;&lt;3 | wire_type)。</summary>
     public static byte[] EncodeRecordFieldTag(int fieldNumber, int wireType) => WriteVarint(fieldNumber << 3 | wireType);
 
-    // ==================== 文件魔数 ====================
+    // ==================== 文件魔数 / 版本识别 ====================
 
-    /// <summary>校验字节表是否带 "TIEDBZD"+v1 魔数头（长度≥8 且前 8 字节匹配）。</summary>
-    public static bool IsZd(byte[] data)
+    /// <summary>前 7 字节是否匹配魔数 "TIEDBZD"（从 off 起）。</summary>
+    internal static bool MagicPrefixMatch(byte[] b, int off)
     {
-        if (data == null || data.Length < Magic.Length)
+        if (b is null || b.Length < off + MagicPrefix.Length)
             return false;
-        for (int i = 0; i < Magic.Length; i++)
-        {
-            if (data[i] != Magic[i])
+        for (int i = 0; i < MagicPrefix.Length; i++)
+            if (b[off + i] != MagicPrefix[i])
                 return false;
-        }
         return true;
     }
 
-    /// <summary>把 zd 字节（含魔数头）写入文件。返回是否写入成功。</summary>
+    /// <summary>base48 版本位是否有效（字节值 0..47，即字符集 '0'..'L' 的下标）。</summary>
+    internal static bool IsValidVersionByte(byte b) => b < 48;
+
+    /// <summary>
+    /// 检测字节流携带的 zd 头版本。
+    /// v1 = 8 字节头（7 魔数 + 版本 0x01）；v2 = 9 字节魔数（7 魔数 + 2 位 base48 版本）且
+    /// 版本字节 ∈ [0,47]；两者都仅在前 7 字节匹配 "TIEDBZD" 时判定，其余 Unknown。
+    /// <para>先判 v1（其版本位固定 0x01，签名最特异），避免把 v1 文件正文当作 v2 版本位。</para>
+    /// </summary>
+    public static ZdVersion DetectVersion(byte[] data)
+    {
+        if (data is null || data.Length < 8 || !MagicPrefixMatch(data, 0))
+            return ZdVersion.Unknown;
+        if (data[7] == 0x01)
+            return ZdVersion.V1;                 // 版本位 0x01 → v1（最特异签名，优先）
+        if (data.Length >= 9 && IsValidVersionByte(data[7]) && IsValidVersionByte(data[8]))
+            return ZdVersion.V2;                 // 两字节 base48 版本 → v2
+        return ZdVersion.Unknown;
+    }
+
+    /// <summary>从 v2 头提取 flags 字节；非 v2 返回 0。</summary>
+    public static byte GetFlags(byte[] data)
+    {
+        if (DetectVersion(data) != ZdVersion.V2 || data.Length < V2HeaderLength)
+            return 0;
+        return data[9];
+    }
+
+    /// <summary>是否为 v2 头数据。</summary>
+    public static bool IsV2(byte[] data) => DetectVersion(data) == ZdVersion.V2;
+
+    /// <summary>校验字节表是否带合法 zd 魔数头（v1 或 v2）。</summary>
+    public static bool IsZd(byte[] data) => DetectVersion(data) != ZdVersion.Unknown;
+
+    /// <summary>按版本取头长：v1=8，v2=10，其它 0。</summary>
+    internal static int HeaderLength(ZdVersion v) => v switch
+    {
+        ZdVersion.V1 => V1HeaderLength,
+        ZdVersion.V2 => V2HeaderLength,
+        _ => 0,
+    };
+
+    /// <summary>把带头的 zd 字节去头返回正文；非法返回空数组。</summary>
+    internal static byte[] ExtractBody(byte[] data)
+    {
+        int hl = HeaderLength(DetectVersion(data));
+        if (hl <= 0 || data.Length < hl)
+            return Array.Empty<byte>();
+        var body = new byte[data.Length - hl];
+        Buffer.BlockCopy(data, hl, body, 0, body.Length);
+        return body;
+    }
+
+    /// <summary>把 zd 正文按 v2 头（flags=0）写入文件。返回是否写入成功。</summary>
     public static bool Save(string path, byte[] bytes)
     {
         try
         {
-            byte[] file = Concat(Magic, bytes ?? Array.Empty<byte>());
+            byte[] header = V2Header(0);
+            byte[] body = bytes ?? Array.Empty<byte>();
+            var file = new byte[header.Length + body.Length];
+            Buffer.BlockCopy(header, 0, file, 0, header.Length);
+            Buffer.BlockCopy(body, 0, file, header.Length, body.Length);
             File.WriteAllBytes(path, file);
             return true;
         }
@@ -250,17 +359,12 @@ public static class Zd
         }
     }
 
-    /// <summary>读 zd 文件：校验魔数头、去头返回正文；非 zd 文件返回空数组。</summary>
+    /// <summary>读 zd 文件：识别 v1/v2 头并去头返回正文；非 zd 文件返回空数组。</summary>
     public static byte[] Load(string path)
     {
         try
         {
-            byte[] data = File.ReadAllBytes(path);
-            if (!IsZd(data))
-                return Array.Empty<byte>();
-            var body = new byte[data.Length - Magic.Length];
-            Buffer.BlockCopy(data, Magic.Length, body, 0, body.Length);
-            return body;
+            return ExtractBody(File.ReadAllBytes(path));
         }
         catch
         {
@@ -276,7 +380,8 @@ public static class Zd
         try
         {
             using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 4096, useAsync: true);
-            await fs.WriteAsync(Magic, 0, Magic.Length).ConfigureAwait(false);
+            byte[] header = V2Header(0);
+            await fs.WriteAsync(header, 0, header.Length).ConfigureAwait(false);
             byte[] body = bytes ?? Array.Empty<byte>();
             await fs.WriteAsync(body, 0, body.Length).ConfigureAwait(false);
             return true;
@@ -299,11 +404,9 @@ public static class Zd
             while ((n = await fs.ReadAsync(buf, 0, buf.Length).ConfigureAwait(false)) > 0)
                 ms.Write(buf, 0, n);
             byte[] data = ms.ToArray();
-            if (!IsZd(data))
+            if (DetectVersion(data) == ZdVersion.Unknown)
                 return Array.Empty<byte>();
-            var body = new byte[data.Length - Magic.Length];
-            Buffer.BlockCopy(data, Magic.Length, body, 0, body.Length);
-            return body;
+            return ExtractBody(data);
         }
         catch
         {
@@ -311,18 +414,18 @@ public static class Zd
         }
     }
 
-    // ==================== CRC32 校验文件（魔数 + CRC + body）====================
-    // 与普通 Save/Load 区别：在魔数头后多 4 字节大端 CRC32（覆盖 body）。
-    // IsZd 仅认魔数前缀，所以 CRC 变体文件仍可通过 IsZd，但需用 LoadChecked 读取。
+    // ==================== CRC32 校验文件（v2 头 + flags + CRC + body）====================
+    // 与普通 Save/Load 区别：在 v2 头（10 字节）后多 4 字节大端 CRC32（覆盖 body）。
+    // 仅接受 v2 头；CRC 位于偏移 10，body 自偏移 14。
 
-    /// <summary>把 zd 字节 + CRC32 校验写入文件（魔数 + 4B CRC + body）。</summary>
+    /// <summary>把 zd 字节 + CRC32 校验写入文件（v2 头 + 4B CRC + body）。</summary>
     public static bool SaveChecked(string path, byte[] bytes)
     {
         try
         {
             byte[] body = bytes ?? Array.Empty<byte>();
             uint crc = ZdCrc32.Compute(body);
-            byte[] file = Concat(Magic, Concat(WriteU32Be(crc), body));
+            byte[] file = Concat(V2Header(0), Concat(WriteU32Be(crc), body));
             File.WriteAllBytes(path, file);
             return true;
         }
@@ -348,11 +451,11 @@ public static class Zd
         try
         {
             byte[] data = File.ReadAllBytes(path);
-            if (!IsZd(data)) { error = "非 zd 文件（魔数不匹配）"; return false; }
-            if (data.Length < Magic.Length + 4) { error = "zd 校验文件过短（缺 CRC）"; return false; }
-            uint stored = ReadU32Be(data, Magic.Length);
-            byte[] payload = new byte[data.Length - Magic.Length - 4];
-            Buffer.BlockCopy(data, Magic.Length + 4, payload, 0, payload.Length);
+            if (DetectVersion(data) != ZdVersion.V2) { error = "非 v2 zd 文件（魔数/版本不匹配）"; return false; }
+            if (data.Length < V2HeaderLength + 4) { error = "zd 校验文件过短（缺 CRC）"; return false; }
+            uint stored = ReadU32Be(data, 10);
+            byte[] payload = new byte[data.Length - V2HeaderLength - 4];
+            Buffer.BlockCopy(data, V2HeaderLength + 4, payload, 0, payload.Length);
             uint actual = ZdCrc32.Compute(payload);
             if (stored != actual)
             {

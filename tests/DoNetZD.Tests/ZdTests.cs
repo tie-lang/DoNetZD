@@ -79,15 +79,41 @@ public class ZdPrimitiveTests
     }
 
     [Fact]
-    public void MagicHeader()
+    public void MagicHeader_V2()
     {
-        AssertBytes([0x54, 0x49, 0x45, 0x44, 0x42, 0x5A, 0x44, 0x01], Zd.MagicHeader);
+        // 当前活动魔数 = v2（9 字节："TIEDBZD" + base48 "02"）
+        AssertBytes([0x54, 0x49, 0x45, 0x44, 0x42, 0x5A, 0x44, 0x00, 0x02], Zd.MagicHeader);
 
         byte[] body = Zd.EncodeI64(42);
         byte[] file = Zd.Concat(Zd.MagicHeader, body);
         Assert.True(Zd.IsZd(file));
+        Assert.Equal(ZdVersion.V2, Zd.DetectVersion(Zd.Concat(Zd.V2Header(0), body)));
+        Assert.Equal(ZdVersion.V2, Zd.DetectVersion(Zd.Concat(Zd.MagicHeader, body)));
         Assert.False(Zd.IsZd(new byte[] { 0x01, 0x02, 0x03 }));
         Assert.False(Zd.IsZd(Array.Empty<byte>()));
+    }
+
+    [Fact]
+    public void DetectVersion_V1Compatible()
+    {
+        // v1（8 字节头，"TIEDBZD" + 0x01）仍可识别
+        byte[] v1 = [0x54, 0x49, 0x45, 0x44, 0x42, 0x5A, 0x44, 0x01];
+        byte[] v1Body = Zd.EncodeString("hello");
+        byte[] v1File = Zd.Concat(v1, v1Body);
+        Assert.Equal(ZdVersion.V1, Zd.DetectVersion(v1File));
+        Assert.True(Zd.IsZd(v1File));
+        Assert.False(Zd.IsV2(v1File));
+        Assert.Equal(0, Zd.GetFlags(v1File));
+
+        // v2 头识别
+        byte[] v2File = Zd.Concat(Zd.V2Header(Zd.FlagDict | Zd.FlagColumnar), Zd.EncodeI64(7));
+        Assert.Equal(ZdVersion.V2, Zd.DetectVersion(v2File));
+        Assert.True(Zd.IsV2(v2File));
+        Assert.Equal(Zd.FlagDict | Zd.FlagColumnar, (byte)(Zd.GetFlags(v2File) & (Zd.FlagDict | Zd.FlagColumnar)));
+
+        // 非法魔数 / 非法版本字节
+        Assert.Equal(ZdVersion.Unknown, Zd.DetectVersion([0x54, 0x49, 0x45, 0x44, 0x42, 0x5A, 0x44, 0x7F]));
+        Assert.Equal(ZdVersion.Unknown, Zd.DetectVersion([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]));
     }
 }
 

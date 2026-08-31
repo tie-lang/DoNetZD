@@ -9,6 +9,11 @@ namespace DoNetZD;
 /// </summary>
 public static class ZdDump
 {
+    private const string Base48Charset = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKL";
+
+    /// <summary>base48 版本位字节 → 字符（0..47 映射到 '0'..'L'）。</summary>
+    private static char Base48Digits(byte b) => b < 48 ? Base48Charset[b] : '?';
+
     /// <summary>把 zd 字节（可带魔数头）转储为可读文本。</summary>
     public static string Dump(byte[] data)
     {
@@ -17,10 +22,15 @@ public static class ZdDump
 
         var sb = new StringBuilder();
         int pos = 0;
-        if (Zd.IsZd(data))
+        ZdVersion ver = Zd.DetectVersion(data);
+        if (ver != ZdVersion.Unknown)
         {
-            sb.Append($"@0  [TIEDBZD v{data[7]}] magic ok (8 bytes)\n");
-            pos = Zd.Magic.Length;
+            sb.Append($"@0  [TIEDBZD ");
+            if (ver == ZdVersion.V2)
+                sb.Append($"v2 v.{Base48Digits(data[7])}{Base48Digits(data[8])} flags 0x{Zd.GetFlags(data):X2}]\n");
+            else
+                sb.Append($"v1 v.{data[7]}]\n");
+            pos = Zd.HeaderLength(ver);
         }
         DumpValue(sb, data, ref pos, 0);
         if (pos < data.Length)

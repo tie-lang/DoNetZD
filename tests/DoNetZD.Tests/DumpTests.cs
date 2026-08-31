@@ -28,8 +28,19 @@ public class DumpTests
     public void Dump_WithMagicHeader()
     {
         byte[] body = ZdCodec.Encode(new ZdValue.Integer(42));
-        byte[] file = Zd.Concat(Zd.MagicHeader, body);
+        byte[] file = Zd.Concat(Zd.V2Header(0), body);
         string dump = ZdDump.Dump(file);
+        Assert.Contains("TIEDBZD v2", dump);
+        Assert.Contains("v.02", dump);
+        Assert.Contains("fixint+ 42", dump);
+    }
+
+    [Fact]
+    public void Dump_V1Header_Recognized()
+    {
+        byte[] body = ZdCodec.Encode(new ZdValue.Integer(42));
+        byte[] v1File = Zd.Concat(Zd.V1Header, body);
+        string dump = ZdDump.Dump(v1File);
         Assert.Contains("TIEDBZD v1", dump);
         Assert.Contains("fixint+ 42", dump);
     }
