@@ -52,6 +52,7 @@ public static class Zd
     internal const byte TagI32 = 0xD2;
     internal const byte TagI64 = 0xD3;
     internal const byte TagExt = 0xD7;                     // v2 扩展类型
+    internal const byte TagStringRef = 0xD8;              // v2 字符串字典引用（varint 池内索引）
     internal const byte TagStr8 = 0xD9;
     internal const byte TagStr16 = 0xDA;
     internal const byte TagStr32 = 0xDB;
@@ -461,6 +462,25 @@ public static class Zd
         try
         {
             byte[] header = V2Header(0);
+            byte[] body = bytes ?? Array.Empty<byte>();
+            var file = new byte[header.Length + body.Length];
+            Buffer.BlockCopy(header, 0, file, 0, header.Length);
+            Buffer.BlockCopy(body, 0, file, header.Length, body.Length);
+            File.WriteAllBytes(path, file);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>按 v2 头（指定 flags）把 zd 正文写入文件。返回是否写入成功。</summary>
+    public static bool SaveWithFlags(string path, byte flags, byte[] bytes)
+    {
+        try
+        {
+            byte[] header = V2Header(flags);
             byte[] body = bytes ?? Array.Empty<byte>();
             var file = new byte[header.Length + body.Length];
             Buffer.BlockCopy(header, 0, file, 0, header.Length);
