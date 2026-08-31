@@ -42,8 +42,6 @@ public sealed class ZdV2Result
     public bool HashVerified;
     /// <summary>哈希校验失败原因（校验失败时）。</summary>
     public string? HashError;
-    /// <summary>字典解码时使用的字符串池。</summary>
-    internal ZdStringPool? StringPoolForDict;
 }
 
 /// <summary>
@@ -114,7 +112,7 @@ public static class ZdV2
         }
         byte[] valueBytes = Slice(data, pos, data.Length - pos);
         return (result.Flags & Zd.FlagDict) != 0
-            ? ZdCodec.DecodeWithPool(valueBytes, result.StringPoolForDict)
+            ? ZdCodec.DecodeWithPool(valueBytes)
             : ZdCodec.Decode(valueBytes);
     }
 

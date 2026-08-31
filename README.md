@@ -29,7 +29,33 @@ DoNetZD 用 .NET 忠实实现了同一格式，字节布局与 tie 侧**逐字�
 - **CRC32 完整性**：`ZdCrc32` 自实现 + `Zd.SaveChecked/LoadChecked` 防篡改文件。
 - **POCO 绑定**：`ZdSerializer` + `[ZdName]`/`[ZdIgnore]` 反射映射，枚举/列表/字典/嵌套递归。
 - **查询与变换**：`ZdPath` 路径访问、`DeepEquals`/`GetHashCode`、`Merge`（RFC 7396）、`Visit` 遍历。
-- **字节可视化**：`ZdDump.Dump` 输出带偏移与类型注解的字节树。
+- **字节可视化**：`ZdDump.Dump` 输出带偏移与类型注解的字节树（含 v2 头与新增类型）。
+
+## zd v2 规范支持
+
+本库实现 `zd v2` 规范（`docs/superpowers/specs/2026-08-31-zd-v2-design.md`），v1 完全兼容读取：
+
+- **10 字节头**：魔数 `TIEDBZD` + base48 2 位版本 `"02"` + flags（字典 bit0 / 列式 bit1 / ext bit2 / 流 bit3 / 压缩 bit4 / schema bit5 / 哈希 bit6）。`Zd.DetectVersion` 自动识别 v1（8 字节）与 v2。
+- **新增核心类型**：`null`（0xC0）、`bytes`（0xC6，v1 旧义 tuple 不落盘故无冲突）、`ext`（0xD7，类型标记 + 载荷，承载 tie-IR 等）。
+- **字节构建器**：`ZdBuilder` 单增缓冲 + 预分配，`ZdCodec.Encode` O(n)，消除连续 `Concat` 的 O(n²)。
+- **字符串字典/引用**：`ZdStringPool` 池段 + 0xD8 引用，重复字符串只存一次。
+- **列式容器**：`ZdColumnar`/`ZdValue.Columnar`（0xD6），表格型数据按列存储。
+- **schema 段 + 内容哈希段**：`ZdSchema`（0xC7）、`ZdContentHash`（0xC1，CRC32/SHA256）。
+- **v2 容器写入/读取**：`ZdV2.Encode/Decode` 一键携带头 + schema + 哈希 + 字典，读端自动校验。
+
+```csharp
+// v2 完整容器：字典 + schema + 内容哈希
+var v = new ZdValue.Map(new Dictionary<string, ZdValue> { ["k"] = new ZdValue.String("重复") });
+var opts = new ZdV2Options {
+    UseStringDict = true,
+    IncludeSchema  = true,
+    Schema = new[] { new KeyValuePair<string,string>("k","string") },
+    IncludeHash = true,
+};
+byte[] container = ZdV2.Encode(v, opts);            // 含 10 字节头
+var res = new ZdV2Result();
+ZdValue back = ZdV2.Decode(container, res);         // res.HashVerified 校验结果
+```
 
 ## 使用示例
 
@@ -105,8 +131,8 @@ ZdValue tml = ZdConvert.TomlToValue("[server]\nhost = \"h\"\n");
 byte[] zd   = ZdConvert.JsonToBytes("""{"id":7}""");
 ```
 
-> JSON 的 `null` 在 zd 中无对应标签：解析会得到 `ZdValue.Null` 哨兵（可输出回
-> `null`），但编码成 zd 字节会抛异常提示。
+> JSON 的 `null` 在 zd v2 中为核心类型（0xC0）：解析得到 `ZdValue.Null`，可编码回 zd 字节并读回。
+> （v1 无 null 标签，v2 起支持，区分「缺失」与「空值」。）
 
 ## 进阶能力
 
@@ -211,12 +237,12 @@ int n = 0; root.Visit(_ => n++);            // 数节点
 的缩进文本树，用于调试与跨语言字节布局对账；经 `ZdConvert.Dump` 也可调用。
 
 ```
-@0  [TIEDBZD v1] magic ok (8 bytes)
-@8  map(2)
-  @9  key "port":
-    @15 [0xCD] u16 8080
-  @18  key "host":
-    @24 [str 7B] "0.0.0.0"
+@0  [TIEDBZD v2 v.02 flags 0x00]
+@10  map(2)
+  @11  key "port":
+    @17 [0xCD] u16 8080
+  @20  key "host":
+    @26 [str 7B] "0.0.0.0"
 ```
 
 ## 目录结构
@@ -225,15 +251,21 @@ int n = 0; root.Visit(_ => n++);            // 数节点
 DoNetZD/
 ├── docs/2026-08-24-donetzd-design.md   # 设计文档（格式规格 + API 取舍）
 ├── src/DoNetZD/                        # 库（netstandard2.0）
-│   ├── Zd.cs                           # 原语层：编码 / 字节工具 / varint / 文件魔数 / 异步 IO / CRC 文件
-│   ├── ZdValue.cs                      # 类型化值模型 + CLR 对象映射 + DeepEquals/Merge/Visit/ToObject
-│   ├── ZdCodec.cs                      # 类型化层：递归 Encode / Decode
+│   ├── Zd.cs                           # 原语层：编码 / 字节工具 / varint / 文件魔数(v1/v2) / 异步 IO / CRC 文件
+│   ├── ZdValue.cs                      # 类型化值模型（含 v2 null/bytes/ext/columnar）+ CLR 映射 + DeepEquals/Merge/Visit/ToObject
+│   ├── ZdCodec.cs                      # 类型化层：递归 Encode/Decode（builder 构建）+ 字符串池编解码
+│   ├── ZdBuilder.cs                    # 单增字节缓冲（encode O(n)、预分配）
+│   ├── ZdStringPool.cs                 # 字符串池段（字典/引用，0xd8）
+│   ├── ZdColumnar.cs                   # 列式容器（0xd6）
+│   ├── ZdV2.cs                         # v2 容器写入/读取（头 + schema + 哈希 + 字典）
+│   ├── ZdSchema.cs                     # schema 段（0xc7）
+│   ├── ZdContentHash.cs                # 内容哈希段（0xc1，CRC32/SHA256）
 │   ├── ZdStream.cs                     # 流式编解码（直读写 Stream）+ 异步文件 IO
 │   ├── ZdCrc32.cs                      # CRC32（IEEE 802.3）自实现
-│   ├── ZdDump.cs                       # zd 字节可视化转储（偏移 + 类型注解）
+│   ├── ZdDump.cs                       # zd 字节可视化转储（偏移 + 类型注解，含 v2 类型）
 │   ├── ZdPath.cs                      # 路径访问（点分键 + [索引]）
 │   ├── ZdSerializer.cs                 # POCO 反射绑定 + ZdName/ZdIgnore 特性
-│   ├── ZdConvert.cs                    # 互转门面（JSON/字节/base64/CSV/INI/XML/YAML/TOML/Dump）
+│   ├── ZdConvert.cs                    # 互转门面（JSON/字节/base64/CSV/INI/XML/YAML/TOML/Dump/v2）
 │   ├── JsonCodec.cs                    # JSON ↔ ZdValue
 │   ├── BytesCodec.cs                   # 字节 / base64 ↔ ZdValue
 │   ├── CsvCodec.cs                     # CSV ↔ ZdValue
@@ -241,7 +273,7 @@ DoNetZD/
 │   ├── XmlCodec.cs                     # XML ↔ ZdValue
 │   ├── YamlCodec.cs                    # YAML ↔ ZdValue（块/流式/缩进子集）
 │   └── TomlCodec.cs                    # TOML ↔ ZdValue（表/数组表/点分键）
-└── tests/DoNetZD.Tests/                # 测试：golden 字节向量 + 回环 + 格式互转 + 流式/POCO/查询/Dump/CRC
+└── tests/DoNetZD.Tests/                # 测试：golden 字节向量 + 回环 + 格式互转 + 流式/POCO/查询/Dump/CRC + v1 兼容 + v2 特性/Builder
 ```
 
 ## 构建与测试

@@ -89,3 +89,43 @@ fptp（Osiris）宿主是 .NET/Avalonia。为了今后能用 tie 写插件（编
 
 - 与 tie 的跨语言实测比对（先手工向量，实测放插件桥阶段）
 - 文件 zstd/brotli 压缩载体（tie 侧另有 compact）
+
+## 8. zd v2 实现（2026-08-31）
+
+在保留 v1 读取兼容的基础上，实现 `zd v2` 规范
+（`F:\Projects\tie-repo\tie-main\docs\superpowers\specs\2026-08-31-zd-v2-design.md`）。
+
+### 头部与版本
+- v1 头 8 字节 `"TIEDBZD"+0x01`；v2 头 10 字节 `"TIEDBZD" + base48("02") + flags`
+  （魔数 7 + 版本 2 + flags 1）。`Zd.DetectVersion` 先判 v1（版本位固定 0x01，最特异），
+  再判 v2（两字节 base48 ∈ [0,47]），从而避免把 v1 文件正文当版本位误判。
+- flags 位：字典 bit0、列式 bit1、ext bit2、流 bit3、压缩 bit4（规范 §2）+ schema bit5、哈希 bit6（本库扩展）。
+- flags 恒存在（缺省 0），与正文无歧义。
+
+### 新增核心类型
+- `null` `0xC0`（区分缺失与空值，v1 无此标签）。
+- `bytes` `0xC6 + 数组头(长度) + 原始字节`（v1 中 0xc6 旧义 tuple 且从不落盘，无冲突）。
+- `ext` `0xD7 + varint(typeTag) + varint(len) + 载荷`（类型标记须非负）。
+
+### 字节构建器与性能
+- `ZdBuilder`：单增缓冲 + `Reserve` 预分配；`ZdCodec.Encode` 一次性写入，消除 O(n²)。
+- decode_string 一次性 `Encoding.UTF8.GetString` 批量解码（非逐码点拼接）。
+
+### 字符串字典/引用
+- `ZdStringPool` 池段（`Dictionary<string,uint>` + 字符串表）；
+  新标签 `0xD8 + varint(池内索引)`。`EncodeWithPool/DecodeWithPool` 输出
+  `[池段(数组头+唯一字符串)][正文(引用)]`，重复字符串只存一次。
+
+### 列式容器
+- `0xD6 + encode_i64(列数) + 每列[列名(str)+类型(str)+encode_i64(列长)] + 各列值`
+  （值按列分组、自描述）。`ZdValue.Columnar` + `ZdColumnar.Column`。
+
+### schema 段 + 内容哈希段
+- `ZdSchema` `0xC7 + 数组头 + 每字段[字段名(str)+类型(str)]`。
+- `ZdContentHash` `0xC1 + algo(0/1) + 0xc6哈希字节`；算法 CRC32（占位）/ SHA256。
+- `ZdV2.Encode/Decode` 容器：`[v2头 flags][schema段?][hash段?][正文]`，哈希覆盖正文，读端校验。
+
+### 兼容性
+- v2 写入流默认写 v2 头（10 字节）；`Save/Load/SaveChecked/LoadChecked/SaveAsync/LoadAsync`
+  统一识别 v1/v2 头并正确去头返回正文。
+- v1 文件可读：`DetectVersion` 返回 v1，正文标签（字符串/整数/…）与 v2 兼容（0xc6 仅 v2 视作 bytes）。

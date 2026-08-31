@@ -193,6 +193,99 @@ public static class ZdDump
                     DumpMap(sb, t, ref pos, n, start, depth, pad);
                     return;
                 }
+            case Zd.TagNull:
+                sb.Append($"{pad}@{start} [0xC0] null\n");
+                return;
+            case Zd.TagBytes:
+                {
+                    long blen = Zd.ReadArrayLength(t, ref pos);
+                    if (blen < 0 || blen > int.MaxValue || pos + blen > t.Length)
+                    {
+                        sb.Append($"{pad}@{start} [0xC6] bytes 长度越界\n");
+                        return;
+                    }
+                    sb.Append($"{pad}@{start} [0xC6] bytes {blen}B {HexRange(t, pos, (int)blen)}\n");
+                    pos += (int)blen;
+                    return;
+                }
+            case Zd.TagSchema:
+                {
+                    long fcount = Zd.ReadArrayLength(t, ref pos);
+                    sb.Append($"{pad}@{start} [0xC7] schema({fcount})\n");
+                    for (long i = 0; i < fcount; i++)
+                    {
+                        if (pos >= t.Length) { sb.Append($"{pad}@{pos} <schema EOF>\n"); return; }
+                        string fn = ReadStringValue(t, ref pos);
+                        string ft = pos < t.Length ? ReadStringValue(t, ref pos) : "";
+                        sb.Append($"{pad}  field \"{fn}\": {ft}\n");
+                    }
+                    return;
+                }
+            case Zd.TagColumnar:
+                {
+                    sb.Append($"{pad}@{start} [0xD6] columnar\n");
+                    if (pos >= t.Length) { sb.Append($"{pad}@{pos} <columnar EOF>\n"); return; }
+                    byte cc = t[pos];
+                    if (cc > 0x7F)
+                    {
+                        sb.Append($"{pad}@{start} [0xD6] columnar 列数非 fixint（定宽），跳过正文\n");
+                        return;
+                    }
+                    pos++;
+                    int ncols = cc;
+                    var lens = new long[ncols];
+                    for (int i = 0; i < ncols; i++)
+                    {
+                        string name = ReadStringValue(t, ref pos);
+                        string type = ReadStringValue(t, ref pos);
+                        if (pos >= t.Length || t[pos] > 0x7F)
+                        {
+                            sb.Append($"{pad}@{pos} <columnar 列长非法>\n");
+                            return;
+                        }
+                        long ln = t[pos++];
+                        lens[i] = ln;
+                        sb.Append($"{pad}  col[{i}] \"{name}\" ({type}) x{ln}\n");
+                    }
+                    for (int i = 0; i < ncols; i++)
+                        for (long j = 0; j < lens[i]; j++)
+                            DumpValue(sb, t, ref pos, depth + 1);
+                    return;
+                }
+            case Zd.TagExt:
+                {
+                    long tt = Zd.ReadVarint(t, ref pos);
+                    long el = Zd.ReadVarint(t, ref pos);
+                    if (el < 0 || el > int.MaxValue || pos + el > t.Length)
+                    {
+                        sb.Append($"{pad}@{start} [0xD7] ext#{tt} 长度越界\n");
+                        return;
+                    }
+                    sb.Append($"{pad}@{start} [0xD7] ext#{tt} {el}B\n");
+                    pos += (int)el;
+                    return;
+                }
+            case Zd.TagStringRef:
+                {
+                    long ri = Zd.ReadVarint(t, ref pos);
+                    sb.Append($"{pad}@{start} [0xD8] str-ref #{ri}\n");
+                    return;
+                }
+            case Zd.TagHash:
+                {
+                    if (pos >= t.Length) { sb.Append($"{pad}@{start} [0xC1] hash <EOF>\n"); return; }
+                    byte algo = t[pos++];
+                    try
+                    {
+                        byte[] hb = Zd.DecodeBytes(t, ref pos);
+                        sb.Append($"{pad}@{start} [0xC1] content-hash algo={algo} {HexRange(hb, 0, hb.Length)}\n");
+                    }
+                    catch (ZdFormatException)
+                    {
+                        sb.Append($"{pad}@{start} [0xC1] content-hash algo={algo} <载荷非法>\n");
+                    }
+                    return;
+                }
             default:
                 sb.Append($"{pad}@{start} [0x{tag:X2}] 未知标签\n");
                 return;
@@ -252,6 +345,50 @@ public static class ZdDump
         (cp < 0x20 || cp == 0x7F || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) ? "." : char.ConvertFromUtf32(cp);
 
     // ---- 读取辅助（大端，越界抛 ZdFormatException）----
+
+    private static string HexRange(byte[] t, int off, int len)
+    {
+        var sb = new StringBuilder();
+        for (int i = 0; i < len; i++)
+        {
+            if (i > 0) sb.Append(' ');
+            sb.Append(t[off + i].ToString("X2"));
+        }
+        return sb.ToString();
+    }
+
+    private static string ReadStringValue(byte[] t, ref int pos)
+    {
+        int start = pos;
+        if (pos >= t.Length)
+            throw new ZdFormatException("字符串缺少标签", start);
+        byte tag = t[pos++];
+        long len;
+        if (tag >= 0xA0 && tag <= 0xBF) len = tag - 0xA0;
+        else if (tag == Zd.TagStr8)
+        {
+            if (pos >= t.Length) throw new ZdFormatException("str8 长度缺失", start);
+            len = t[pos++];
+        }
+        else if (tag == Zd.TagStr16)
+        {
+            if (pos + 2 > t.Length) throw new ZdFormatException("str16 越界", start);
+            len = (t[pos] << 8) | t[pos + 1]; pos += 2;
+        }
+        else if (tag == Zd.TagStr32)
+        {
+            if (pos + 4 > t.Length) throw new ZdFormatException("str32 越界", start);
+            len = ((long)t[pos] << 24) | ((long)t[pos + 1] << 16) | ((long)t[pos + 2] << 8) | t[pos + 3]; pos += 4;
+        }
+        else
+        {
+            throw new ZdFormatException($"期望字符串，实际 0x{tag:X2}", start);
+        }
+        if (len < 0 || len > int.MaxValue || pos + len > t.Length)
+            throw new ZdFormatException("字符串长度越界", start);
+        string s = ReadUtf8(t, ref pos, len, start);
+        return s;
+    }
 
     private static byte ReadByte(byte[] t, ref int pos, int start)
     {

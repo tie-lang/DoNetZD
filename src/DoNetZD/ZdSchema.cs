@@ -9,8 +9,8 @@ namespace DoNetZD;
 /// </summary>
 public static class ZdSchema
 {
-    /// <summary>编码 schema 段（(字段名, 类型) 列表）。</summary>
-    public static byte[] Encode(IReadOnlyList<KeyValuePair<string, string>> fields)
+    /// <summary>编码 schema 段（(字段名, 类型) 列表；null/空 → schema(0)）。</summary>
+    public static byte[] Encode(IReadOnlyList<KeyValuePair<string, string>>? fields)
     {
         var b = new ZdBuilder(32 + (fields?.Count ?? 0) * 16);
         b.AppendByte(Zd.TagSchema);

@@ -68,4 +68,14 @@ public static class ZdConvert
     // ---- 调试 / 字节可视化 ----
     /// <summary>把 zd 字节（可带魔数头）转储为“偏移 + 类型注解”的可读文本。</summary>
     public static string Dump(byte[] zdBytes) => ZdDump.Dump(zdBytes);
+
+    // ---- v2 容器 / 字符串字典 / 列式 ----
+    /// <summary>ZdValue → v2 完整容器字节（含 10 字节头；可按 <paramref name="options"/> 附着 schema/哈希/字典）。</summary>
+    public static byte[] ValueToV2(ZdValue value, ZdV2Options? options = null) => ZdV2.Encode(value, options);
+    /// <summary>v2 完整容器字节 → ZdValue（校验哈希）。</summary>
+    public static ZdValue V2ToValue(byte[] v2Bytes) => ZdV2.Decode(v2Bytes);
+    /// <summary>ZdValue → 带字符串字典引用的字节（[池段][正文]）。</summary>
+    public static byte[] ValueToDictBytes(ZdValue value) => ZdCodec.EncodeWithPool(value);
+    /// <summary>带字符串字典引用的字节 → ZdValue。</summary>
+    public static ZdValue DictBytesToValue(byte[] bytes) => ZdCodec.DecodeWithPool(bytes);
 }

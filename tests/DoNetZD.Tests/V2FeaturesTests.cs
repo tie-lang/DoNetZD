@@ -10,6 +10,43 @@ public class V2FeaturesTests
 
     private static void AssertBytes(byte[] expected, byte[] actual) => Assert.Equal(Hex(expected), Hex(actual));
 
+    // ==================== golden 字节向量 ====================
+
+    [Fact]
+    public void Golden_V2Header()
+    {
+        // 10 字节 v2 头：魔数 7 + base48 "02" + flags 0
+        AssertBytes([0x54, 0x49, 0x45, 0x44, 0x42, 0x5A, 0x44, 0x00, 0x02, 0x00], Zd.V2Header(0));
+        // flags 位：字典 bit0=1 | 列式 bit1=2 | ext bit2=4 | 流 bit3=8 | 压缩 bit4=16
+        AssertBytes(
+            [0x54, 0x49, 0x45, 0x44, 0x42, 0x5A, 0x44, 0x00, 0x02, 0x1F],
+            Zd.V2Header(Zd.FlagDict | Zd.FlagColumnar | Zd.FlagExt | Zd.FlagStream | Zd.FlagCompressed));
+    }
+
+    [Fact]
+    public void Golden_NullBytesExt()
+    {
+        AssertBytes([0xC0], Zd.EncodeNull());
+
+        // bytes = 0xC6 + 数组头(长度) + 原始字节（4 字节 → fixarray 0x94）
+        AssertBytes([0xC6, 0x94, 0xDE, 0xAD, 0xBE, 0xEF], Zd.EncodeBytes([0xDE, 0xAD, 0xBE, 0xEF]));
+        AssertBytes([0xC6, 0x90], Zd.EncodeBytes([]));   // 空 bytes = 0xC6 + fixarray(0)
+
+        // ext = 0xD7 + varint(typeTag) + varint(len) + 载荷
+        AssertBytes([0xD7, 0x02, 0x02, 0x01, 0x02], Zd.EncodeExt(2, [0x01, 0x02]));
+
+        // 解码原语回环
+        int p = 0;
+        byte[] b = [0xC6, 0x94, 0xDE, 0xAD, 0xBE, 0xEF];
+        AssertBytes([0xDE, 0xAD, 0xBE, 0xEF], Zd.DecodeBytes(b, ref p));
+        Assert.Equal(6, p);
+
+        int q = 0;
+        Zd.DecodeExt([0xD7, 0x02, 0x02, 0x01, 0x02], ref q, out long typeTag, out byte[] payload);
+        Assert.Equal(2, typeTag);
+        AssertBytes([0x01, 0x02], payload);
+    }
+
     // ==================== 字符串字典 / 引用 ====================
 
     [Fact]
