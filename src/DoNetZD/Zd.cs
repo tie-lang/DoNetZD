@@ -35,6 +35,8 @@ public static class Zd
     internal const byte TagFixArrayMin = 0x90;             // 0x90-0x9F fixarray
     internal const byte TagFixStrMin = 0xA0;               // 0xA0-0xBF fixstr
     internal const byte TagNull = 0xC0;                    // v2 null/空值/缺失
+    internal const byte TagHash = 0xC1;                    // v2 内容哈希段（CRC32/SHA256 承载）
+    internal const byte TagSchema = 0xC7;                  // v2 schema 段（字段名+类型）
     internal const byte TagFalse = 0xC2;
     internal const byte TagTrue = 0xC3;
     internal const byte TagChar = 0xC4;

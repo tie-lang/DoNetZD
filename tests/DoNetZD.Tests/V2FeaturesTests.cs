@@ -93,4 +93,66 @@ public class V2FeaturesTests
             if (System.IO.File.Exists(tmp)) System.IO.File.Delete(tmp);
         }
     }
+
+    // ==================== Schema 段 + 内容哈希段 ====================
+
+    [Fact]
+    public void Container_Schema_And_Hash()
+    {
+        var v = new ZdValue.Map(new Dictionary<string, ZdValue>
+        {
+            ["name"] = new ZdValue.String("火药"),
+            ["power"] = new ZdValue.Integer(9),
+        });
+        var opts = new ZdV2Options
+        {
+            IncludeSchema = true,
+            Schema = new List<KeyValuePair<string, string>>
+            {
+                new("name", "string"),
+                new("power", "int"),
+            },
+            IncludeHash = true,
+            HashAlgo = ZdHashAlgo.Crc32,
+        };
+
+        byte[] container = ZdV2.Encode(v, opts);
+        Assert.Equal(ZdVersion.V2, Zd.DetectVersion(container));
+        byte flags = Zd.GetFlags(container);
+        Assert.True((flags & Zd.FlagSchema) != 0);
+        Assert.True((flags & Zd.FlagHash) != 0);
+        Assert.True((flags & Zd.FlagColumnar) == 0);
+
+        var res = new ZdV2Result();
+        ZdValue back = ZdV2.Decode(container, res);
+        Assert.True(v.DeepEquals(back));
+        Assert.NotNull(res.Schema);
+        Assert.Equal(2, res.Schema!.Count);
+        Assert.Equal("name", res.Schema[0].Key);
+        Assert.Equal("string", res.Schema[0].Value);
+        Assert.Equal(ZdHashAlgo.Crc32, res.HashAlgo);
+        Assert.True(res.HashVerified);
+        Assert.Null(res.HashError);
+
+        // 篡改正文 → 哈希校验失败
+        byte[] tampered = (byte[])container.Clone();
+        int lastIndex = tampered.Length - 1;
+        tampered[lastIndex] ^= 0xFF;
+        var res2 = new ZdV2Result();
+        ZdV2.Decode(tampered, res2);
+        Assert.False(res2.HashVerified);
+        Assert.NotNull(res2.HashError);
+    }
+
+    [Fact]
+    public void Container_Sha256_Hash()
+    {
+        var v = new ZdValue.String("内容完整性测试");
+        var opts = new ZdV2Options { IncludeHash = true, HashAlgo = ZdHashAlgo.Sha256 };
+        byte[] container = ZdV2.Encode(v, opts);
+        var res = new ZdV2Result();
+        Assert.True(v.DeepEquals(ZdV2.Decode(container, res)));
+        Assert.Equal(ZdHashAlgo.Sha256, res.HashAlgo);
+        Assert.True(res.HashVerified);
+    }
 }
