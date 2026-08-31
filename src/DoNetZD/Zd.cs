@@ -53,6 +53,7 @@ public static class Zd
     internal const byte TagI64 = 0xD3;
     internal const byte TagExt = 0xD7;                     // v2 扩展类型
     internal const byte TagStringRef = 0xD8;              // v2 字符串字典引用（varint 池内索引）
+    internal const byte TagColumnar = 0xD6;               // v2 列式容器
     internal const byte TagStr8 = 0xD9;
     internal const byte TagStr16 = 0xDA;
     internal const byte TagStr32 = 0xDB;

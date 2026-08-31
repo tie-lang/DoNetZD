@@ -68,6 +68,12 @@ public abstract class ZdValue
         public IReadOnlyDictionary<string, ZdValue> Entries { get; } = entries;
     }
 
+    /// <summary>列式容器（v2）：按列存储的表型数据。</summary>
+    public sealed class Columnar(IReadOnlyList<Column> columns) : ZdValue
+    {
+        public IReadOnlyList<Column> Columns { get; } = columns;
+    }
+
     // ==================== 便捷构造 ====================
 
     public static Integer I(long v) => new Integer(v);
@@ -98,6 +104,7 @@ public abstract class ZdValue
             case Ext zd: return zd;
             case Array zd: return zd;
             case Map zd: return zd;
+            case Columnar zd: return zd;
             case string s: return new String(s);
             case byte[] raw: return new Bytes(raw);
             case char ch: return new Char(char.ConvertToUtf32(ch.ToString(), 0));
@@ -160,6 +167,16 @@ public abstract class ZdValue
                     if (!DeepEquals(kv.Value, bv)) return false;
                 }
                 return true;
+            case Columnar ca when b is Columnar cb:
+                if (ca.Columns.Count != cb.Columns.Count) return false;
+                for (int c = 0; c < ca.Columns.Count; c++)
+                {
+                    Column x = ca.Columns[c], y = cb.Columns[c];
+                    if (x.Name != y.Name || x.Type != y.Type || x.Values.Count != y.Values.Count) return false;
+                    for (int i = 0; i < x.Values.Count; i++)
+                        if (!DeepEquals(x.Values[i], y.Values[i])) return false;
+                }
+                return true;
             default: return false;
         }
     }
@@ -187,6 +204,15 @@ public abstract class ZdValue
                 foreach (var kv in m.Entries)
                     mh = Combine(Combine(mh, kv.Key.GetHashCode()), kv.Value.GetHashCode());
                 return mh;
+            case Columnar cl:
+                int ch = 12;
+                foreach (var col in cl.Columns)
+                {
+                    ch = Combine(ch, col.Name.GetHashCode());
+                    ch = Combine(ch, col.Type.GetHashCode());
+                    foreach (var item in col.Values) ch = Combine(ch, item.GetHashCode());
+                }
+                return ch;
             default: return base.GetHashCode();
         }
     }
@@ -242,6 +268,10 @@ public abstract class ZdValue
             case Map m:
                 foreach (var kv in m.Entries) kv.Value.VisitCore(a);
                 break;
+            case Columnar cl:
+                foreach (var col in cl.Columns)
+                    for (int i = 0; i < col.Values.Count; i++) col.Values[i].VisitCore(a);
+                break;
         }
     }
 
@@ -292,6 +322,7 @@ public abstract class ZdValue
             case Ext ex: return $"<ext#{ex.TypeTag} len={ex.Payload.Length}>";
             case Array a: return "[" + string.Join(", ", a.Items) + "]";
             case Map m: return "{" + string.Join(", ", m.Entries.Select(kv => $"{kv.Key}: {kv.Value}")) + "}";
+            case Columnar cl: return "<columnar " + string.Join(", ", cl.Columns.Select(c => $"{c.Name}:{c.Type}[{c.Values.Count}]")) + ">";
             default: return base.ToString() ?? "";
         }
     }

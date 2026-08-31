@@ -62,9 +62,26 @@ public static class ZdCodec
                 b.AppendBytes(Zd.WriteVarint(ex.Payload.Length));
                 b.AppendBytes(ex.Payload);
                 break;
+            case ZdValue.Columnar col: EncodeColumnar(b, col, EncodeInto); break;
             default:
                 throw new ArgumentException($"未知 zd 值类型 {v.GetType().Name}");
         }
+    }
+
+    private static void EncodeColumnar(ZdBuilder b, ZdValue.Columnar col, Action<ZdBuilder, ZdValue> enc)
+    {
+        b.AppendByte(Zd.TagColumnar);
+        b.AppendBytes(Zd.EncodeI64(col.Columns.Count));
+        for (int c = 0; c < col.Columns.Count; c++)
+        {
+            Column x = col.Columns[c];
+            b.AppendBytes(Zd.EncodeString(x.Name));
+            b.AppendBytes(Zd.EncodeString(x.Type));
+            b.AppendBytes(Zd.EncodeI64(x.Values.Count));
+        }
+        for (int c = 0; c < col.Columns.Count; c++)
+            for (int i = 0; i < col.Columns[c].Values.Count; i++)
+                enc(b, col.Columns[c].Values[i]);
     }
 
     /// <summary>粗略估算编码后字节数，用于缓冲预分配（低估无害，builder 会扩容）。</summary>
@@ -332,9 +349,50 @@ public static class ZdCodec
                     pos += (int)elen;
                     return new ZdValue.Ext(typeTag, payload);
                 }
+            case Zd.TagColumnar: return DecodeColumnar(t, ref pos, ver, pool, start);
             default:
                 throw new ZdFormatException($"未知 zd 标签 0x{tag:X2}", start);
         }
+    }
+
+    private static ZdValue DecodeColumnar(byte[] t, ref int pos, ZdVersion ver, ZdStringPool? pool, int start)
+    {
+        long ccount = ReadIntValue(t, ref pos, ver, pool);
+        if (ccount < 0 || ccount > int.MaxValue)
+            throw new ZdFormatException("列数越界", start);
+        int n = (int)ccount;
+        var names = new string[n];
+        var types = new string[n];
+        var lens = new int[n];
+        for (int i = 0; i < n; i++)
+        {
+            ZdValue nameV = DecodeValue(t, ref pos, ver, pool);
+            if (nameV is not ZdValue.String ns) throw new ZdFormatException("列名必须为字符串", pos);
+            names[i] = ns.Value;
+            ZdValue typeV = DecodeValue(t, ref pos, ver, pool);
+            if (typeV is not ZdValue.String ts) throw new ZdFormatException("列类型必须为字符串", pos);
+            types[i] = ts.Value;
+            long ln = ReadIntValue(t, ref pos, ver, pool);
+            if (ln < 0 || ln > int.MaxValue || pos + ln > t.Length)
+                throw new ZdFormatException("列长度越界", start);
+            lens[i] = (int)ln;
+        }
+        var cols = new List<Column>(n);
+        for (int c = 0; c < n; c++)
+        {
+            var items = new ZdValue[lens[c]];
+            for (int j = 0; j < lens[c]; j++)
+                items[j] = DecodeValue(t, ref pos, ver, pool);
+            cols.Add(new Column(names[c], types[c], items));
+        }
+        return new ZdValue.Columnar(cols);
+    }
+
+    private static long ReadIntValue(byte[] t, ref int pos, ZdVersion ver, ZdStringPool? pool)
+    {
+        ZdValue v = DecodeValue(t, ref pos, ver, pool);
+        return v is ZdValue.Integer i ? i.Value
+            : throw new ZdFormatException("期望整数", pos);
     }
 
     private static ZdValue DecodeString(byte[] t, ref int pos, long byteLen)

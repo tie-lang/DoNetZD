@@ -59,4 +59,38 @@ public class V2FeaturesTests
             if (System.IO.File.Exists(tmp)) System.IO.File.Delete(tmp);
         }
     }
+
+    // ==================== 列式容器 ====================
+
+    [Fact]
+    public void Columnar_Roundtrip()
+    {
+        var col = new ZdValue.Columnar(new[]
+        {
+            new Column("name", "string",
+                new ZdValue[] { new ZdValue.String("刺客"), new ZdValue.String("战士"), new ZdValue.String("法师") }),
+            new Column("power", "int",
+                new ZdValue[] { new ZdValue.Integer(9), new ZdValue.Integer(7), new ZdValue.Integer(8) }),
+            new Column("active", "bool",
+                new ZdValue[] { new ZdValue.Bool(true), new ZdValue.Bool(false), new ZdValue.Bool(true) }),
+        });
+
+        byte[] enc = ZdCodec.Encode(col);
+        Assert.Equal(0xD6, enc[0]);                     // 0xD6 列式标签
+        ZdValue back = ZdCodec.Decode(enc);
+        Assert.True(col.DeepEquals(back));
+        Assert.IsType<ZdValue.Columnar>(back);
+
+        // 列式位 flag 落地
+        string tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"zd_col_{System.Guid.NewGuid():N}.zd");
+        try
+        {
+            Assert.True(Zd.SaveWithFlags(tmp, Zd.FlagColumnar, enc));
+            Assert.True((Zd.GetFlags(System.IO.File.ReadAllBytes(tmp)) & Zd.FlagColumnar) != 0);
+        }
+        finally
+        {
+            if (System.IO.File.Exists(tmp)) System.IO.File.Delete(tmp);
+        }
+    }
 }
