@@ -34,11 +34,13 @@ public static class Zd
     internal const byte TagMapMin = 0x80;                  // 0x80-0x8F fixmap
     internal const byte TagFixArrayMin = 0x90;             // 0x90-0x9F fixarray
     internal const byte TagFixStrMin = 0xA0;               // 0xA0-0xBF fixstr
+    internal const byte TagNull = 0xC0;                    // v2 null/空值/缺失
     internal const byte TagFalse = 0xC2;
     internal const byte TagTrue = 0xC3;
     internal const byte TagChar = 0xC4;
     internal const byte TagTrit = 0xC5;
-    internal const byte TagTuple = 0xC6;
+    internal const byte TagBytes = 0xC6;                   // v2 bytes（v1 中 0xC6 旧义为 tuple，v1 从不落盘）
+    internal const byte TagTuple = 0xC6;                   // v1 旧义（标签复用，见 TagBytes）
     internal const byte TagF32 = 0xCA;
     internal const byte TagF64 = 0xCB;
     internal const byte TagU8 = 0xCC;
@@ -49,6 +51,7 @@ public static class Zd
     internal const byte TagI16 = 0xD1;
     internal const byte TagI32 = 0xD2;
     internal const byte TagI64 = 0xD3;
+    internal const byte TagExt = 0xD7;                     // v2 扩展类型
     internal const byte TagStr8 = 0xD9;
     internal const byte TagStr16 = 0xDA;
     internal const byte TagStr32 = 0xDB;
@@ -244,6 +247,118 @@ public static class Zd
         if (n <= 65535)
             return Concat(Concat(new[] { TagStr16 }, WriteU16Be((ushort)n)), body);
         return Concat(Concat(new[] { TagStr32 }, WriteU32Be((uint)n)), body);
+    }
+
+    // ==================== v2 类型原语：null / bytes / ext ====================
+
+    /// <summary>null 编码：0xc0（v2）。</summary>
+    public static byte[] EncodeNull() => new[] { TagNull };
+
+    /// <summary>bytes 编码：0xc6 + 数组头(长度) + 原始字节（v2）。</summary>
+    public static byte[] EncodeBytes(byte[] data)
+    {
+        byte[] raw = data ?? Array.Empty<byte>();
+        return Concat(ConcatOne(TagBytes, EncodeArrayHeader(raw.Length)), raw);
+    }
+
+    /// <summary>ext 编码：0xd7 + varint(typeTag) + varint(len) + 载荷（v2）。typeTag 须非负。</summary>
+    public static byte[] EncodeExt(long typeTag, byte[] payload)
+    {
+        if (typeTag < 0)
+            throw new ArgumentOutOfRangeException(nameof(typeTag), "zd v2 ext 类型标记须非负（varint 编码）。");
+        byte[] p = payload ?? Array.Empty<byte>();
+        byte[] head = ConcatOne(TagExt, WriteVarint(typeTag));
+        head = Concat(head, WriteVarint(p.Length));
+        return Concat(head, p);
+    }
+
+    /// <summary>读一个 varint（7 位分组、0x80 续位），并推进 pos；字节不足抛异常。</summary>
+    public static long ReadVarint(byte[] t, ref int pos)
+    {
+        ulong v = 0;
+        int shift = 0;
+        while (true)
+        {
+            if (t is null || pos >= t.Length)
+                throw new ZdFormatException("varint 不完整（提前结束）", pos);
+            byte b = t[pos++];
+            v |= (ulong)(b & 0x7F) << shift;
+            if ((b & 0x80) == 0)
+                break;
+            shift += 7;
+            if (shift > 63)
+                throw new ZdFormatException("varint 过长", pos);
+        }
+        return (long)v;
+    }
+
+    /// <summary>读数组头返回长度（fixarray/array16/array32），并推进 pos；非数组头抛异常。</summary>
+    public static long ReadArrayLength(byte[] t, ref int pos)
+    {
+        if (t is null || pos >= t.Length)
+            throw new ZdFormatException("array 头缺失", pos);
+        byte tag = t[pos];
+        if (tag >= 0x90 && tag <= 0x9F) { pos++; return tag - 0x90; }
+        if (tag == TagArray16 || tag == TagArray32)
+        {
+            pos++;
+            if (tag == TagArray16)
+            {
+                if (pos + 2 > t.Length)
+                    throw new ZdFormatException("array16 长度越界", pos);
+                long v = (t[pos] << 8) | t[pos + 1];
+                pos += 2;
+                return v;
+            }
+            if (pos + 4 > t.Length)
+                throw new ZdFormatException("array32 长度越界", pos);
+            long u = ((long)t[pos] << 24) | ((long)t[pos + 1] << 16) | ((long)t[pos + 2] << 8) | t[pos + 3];
+            pos += 4;
+            return u;
+        }
+        throw new ZdFormatException($"期望数组头，实际 0x{tag:X2}", pos);
+    }
+
+    /// <summary>null 原语解码：期望 0xc0（pos 指向标签），消费 1 字节。</summary>
+    public static void DecodeNull(byte[] t, ref int pos)
+    {
+        if (t is null || pos >= t.Length || t[pos] != TagNull)
+            throw new ZdFormatException($"期望 null(0xc0)，实际 0x{(t is null || pos >= t.Length ? "EOF" : t[pos].ToString("X2"))}", pos);
+        pos++;
+    }
+
+    /// <summary>bytes 原语解码：0xc6 + 数组头(长度) + 原始字节。</summary>
+    public static byte[] DecodeBytes(byte[] t, ref int pos)
+    {
+        int start = pos;
+        if (t is null || pos >= t.Length || t[pos] != TagBytes)
+            throw new ZdFormatException($"期望 bytes(0xc6)，实际 0x{(t is null || pos >= t.Length ? "EOF" : t[pos].ToString("X2"))}", start);
+        pos++;
+        long len = ReadArrayLength(t, ref pos);
+        if (len < 0 || len > int.MaxValue || pos + len > t.Length)
+            throw new ZdFormatException("bytes 长度越界", start);
+        byte[] raw = new byte[len];
+        Array.Copy(t, pos, raw, 0, (int)len);
+        pos += (int)len;
+        return raw;
+    }
+
+    /// <summary>ext 原语解码：0xd7 + varint(typeTag) + varint(len) + 载荷。</summary>
+    public static void DecodeExt(byte[] t, ref int pos, out long typeTag, out byte[] payload)
+    {
+        int start = pos;
+        typeTag = 0;
+        payload = Array.Empty<byte>();
+        if (t is null || pos >= t.Length || t[pos] != TagExt)
+            throw new ZdFormatException($"期望 ext(0xd7)，实际 0x{(t is null || pos >= t.Length ? "EOF" : t[pos].ToString("X2"))}", start);
+        pos++;
+        typeTag = ReadVarint(t, ref pos);
+        long len = ReadVarint(t, ref pos);
+        if (len < 0 || len > int.MaxValue || pos + len > t.Length)
+            throw new ZdFormatException("ext 载荷长度越界", start);
+        payload = new byte[len];
+        Array.Copy(t, pos, payload, 0, (int)len);
+        pos += (int)len;
     }
 
     // ==================== 容器头 ====================

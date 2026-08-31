@@ -40,14 +40,23 @@ public abstract class ZdValue
     /// <summary>字符串。</summary>
     public sealed class String(string value) : ZdValue { public string Value { get; } = value; }
 
-    /// <summary>null 哨兵：用于 JSON/XML 等含 null 的外部格式中转。
-    /// 注意 zd 字节格式本身没有 null 标签——Encode 到字节会抛异常，但可输出为 JSON null 等。</summary>
+    /// <summary>null 值（v2）：0xc0 可编码，区分「缺失」与「空值」；亦用于 JSON/XML 中转。</summary>
     public sealed class Null : ZdValue
     {
         /// <summary>单例。</summary>
         public static readonly Null Instance = new();
 
         private Null() { }
+    }
+
+    /// <summary>bytes（v2）：原始二进制 blob，内容为 byte[]。</summary>
+    public sealed class Bytes(byte[] content) : ZdValue { public byte[] Content { get; } = content; }
+
+    /// <summary>ext 扩展类型（v2）：i64 类型标记 + 原始载荷；tie-IR/char/trit/平台数据走此。</summary>
+    public sealed class Ext(long typeTag, byte[] payload) : ZdValue
+    {
+        public long TypeTag { get; } = typeTag;
+        public byte[] Payload { get; } = payload;
     }
 
     /// <summary>数组（长度在头部，元素顺序排列）。</summary>
@@ -85,9 +94,12 @@ public abstract class ZdValue
             case String zd: return zd;
             case Trit zd: return zd;
             case Char zd: return zd;
+            case Bytes zd: return zd;
+            case Ext zd: return zd;
             case Array zd: return zd;
             case Map zd: return zd;
             case string s: return new String(s);
+            case byte[] raw: return new Bytes(raw);
             case char ch: return new Char(char.ConvertToUtf32(ch.ToString(), 0));
             case bool b: return new Bool(b);
             case double d: return new Float(d);
@@ -132,6 +144,8 @@ public abstract class ZdValue
             case Char ca when b is Char cb: return ca.Codepoint == cb.Codepoint;
             case Trit ta when b is Trit tb: return ta.Value == tb.Value;
             case String sa when b is String sb: return sa.Value == sb.Value;
+            case Bytes ba when b is Bytes bb: return ContentsEqual(ba.Content, bb.Content);
+            case Ext ea when b is Ext eb: return ea.TypeTag == eb.TypeTag && ContentsEqual(ea.Payload, eb.Payload);
             case Null when b is Null: return true;
             case Array aa when b is Array ab:
                 if (aa.Items.Count != ab.Items.Count) return false;
@@ -162,6 +176,8 @@ public abstract class ZdValue
             case Trit t: return Combine(5, t.Value.GetHashCode());
             case String s: return Combine(6, s.Value.GetHashCode());
             case Null: return 7;
+            case Bytes by: return Combine(10, HashBytes(by.Content));
+            case Ext ex: return Combine(Combine(11, ex.TypeTag.GetHashCode()), HashBytes(ex.Payload));
             case Array a:
                 int ah = 8;
                 foreach (var x in a.Items) ah = Combine(ah, x.GetHashCode());
@@ -239,6 +255,27 @@ public abstract class ZdValue
 
     private static int Combine(int a, int b) => unchecked((a * 31) + b);
 
+    private static bool ContentsEqual(byte[] a, byte[] b)
+    {
+        if (ReferenceEquals(a, b)) return true;
+        if (a is null || b is null || a.Length != b.Length) return false;
+        for (int i = 0; i < a.Length; i++)
+            if (a[i] != b[i]) return false;
+        return true;
+    }
+
+    private static int HashBytes(byte[] data)
+    {
+        if (data is null || data.Length == 0) return 0;
+        unchecked
+        {
+            int h = 17;
+            for (int i = 0; i < data.Length; i++)
+                h = (h * 31) + data[i];
+            return h;
+        }
+    }
+
     /// <summary>打印直观表示（调试/日志用）。</summary>
     public override string ToString()
     {
@@ -251,6 +288,8 @@ public abstract class ZdValue
             case Trit t: return t.Value.ToString();
             case String s: return "\"" + s.Value + "\"";
             case Null: return "null";
+            case Bytes by: return "<bytes len=" + by.Content.Length + ">";
+            case Ext ex: return $"<ext#{ex.TypeTag} len={ex.Payload.Length}>";
             case Array a: return "[" + string.Join(", ", a.Items) + "]";
             case Map m: return "{" + string.Join(", ", m.Entries.Select(kv => $"{kv.Key}: {kv.Value}")) + "}";
             default: return base.ToString() ?? "";

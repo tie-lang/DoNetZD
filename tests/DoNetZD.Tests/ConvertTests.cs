@@ -43,10 +43,14 @@ public class JsonTests
     }
 
     [Fact]
-    public void ToBytes_WithNull_Throws()
+    public void ToBytes_WithNull_IsEncodable()
     {
+        // v2 起 null 为核心类型（0xc0）：Json 的 null → Null 值可编码且回环
         ZdValue v = JsonCodec.Parse("{\"a\":null}");
-        Assert.Throws<ArgumentException>(() => ZdCodec.Encode(v));
+        byte[] enc = ZdCodec.Encode(v);
+        var back = (ZdValue.Map)ZdCodec.Decode(enc);
+        Assert.IsType<ZdValue.Null>(back.Entries["a"]);
+        Assert.Equal([0xC0], Zd.EncodeNull());
     }
 
     [Fact]

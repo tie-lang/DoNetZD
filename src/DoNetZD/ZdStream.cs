@@ -30,7 +30,9 @@ public static class ZdStream
                 break;
             case ZdValue.Trit t: stream.WriteByte(Zd.TagTrit); stream.WriteByte((byte)(t.Value & 0xFF)); break;
             case ZdValue.String s: WriteAll(stream, Zd.EncodeString(s.Value)); break;
-            case ZdValue.Null: throw new ArgumentException("zd 字节格式无 null 标签：Null 哨兵不能写入流");
+            case ZdValue.Null: stream.WriteByte(Zd.TagNull); break;
+            case ZdValue.Bytes by: WriteAll(stream, Zd.EncodeBytes(by.Content)); break;
+            case ZdValue.Ext ex: WriteAll(stream, Zd.EncodeExt(ex.TypeTag, ex.Payload)); break;
             case ZdValue.Array a:
                 WriteAll(stream, Zd.EncodeArrayHeader(a.Items.Count));
                 for (int i = 0; i < a.Items.Count; i++)
@@ -103,6 +105,32 @@ public static class ZdStream
 
         private ushort ReadU16(int start) => (ushort)((ReadByte(start) << 8) | ReadByte(start));
         private uint ReadU32(int start) => (uint)((ReadByte(start) << 24) | (ReadByte(start) << 16) | (ReadByte(start) << 8) | ReadByte(start));
+
+        private long ReadArrayLen(int start)
+        {
+            byte tag = ReadByte(start);
+            if (tag >= 0x90 && tag <= 0x9F) return tag - 0x90;
+            if (tag == Zd.TagArray16) return ReadU16(start);
+            if (tag == Zd.TagArray32) return ReadU32(start);
+            throw new ZdFormatException($"期望数组头，实际 0x{tag:X2}", start);
+        }
+
+        private long ReadVarint(int start)
+        {
+            ulong v = 0;
+            int shift = 0;
+            while (true)
+            {
+                byte b = ReadByte(start);
+                v |= (ulong)(b & 0x7F) << shift;
+                if ((b & 0x80) == 0)
+                    break;
+                shift += 7;
+                if (shift > 63)
+                    throw new ZdFormatException("varint 过长", start);
+            }
+            return (long)v;
+        }
         private ulong ReadU64(int start)
         {
             ulong v = 0;
@@ -128,10 +156,26 @@ public static class ZdStream
 
             switch (tag)
             {
+                case Zd.TagNull: return ZdValue.Null.Instance;
                 case Zd.TagFalse: return new ZdValue.Bool(false);
                 case Zd.TagTrue: return new ZdValue.Bool(true);
                 case Zd.TagChar: return new ZdValue.Char(unchecked((int)ReadU32(start)));
                 case Zd.TagTrit: return new ZdValue.Trit((sbyte)ReadByte(start));
+                case Zd.TagBytes:
+                    {
+                        long blen = ReadArrayLen(start);
+                        if (blen < 0 || blen > int.MaxValue)
+                            throw new ZdFormatException("bytes 长度越界", start);
+                        return new ZdValue.Bytes(ReadBytes((int)blen, start));
+                    }
+                case Zd.TagExt:
+                    {
+                        long tt = ReadVarint(start);
+                        long el = ReadVarint(start);
+                        if (el < 0 || el > int.MaxValue)
+                            throw new ZdFormatException("ext 载荷长度越界", start);
+                        return new ZdValue.Ext(tt, ReadBytes((int)el, start));
+                    }
                 case Zd.TagF32: return new ZdValue.Float(BitSingle(ReadU32(start)));
                 case Zd.TagF64: return new ZdValue.Float(BitDouble(ReadU64(start)));
                 case Zd.TagU8: return new ZdValue.Integer(ReadByte(start));

@@ -26,7 +26,9 @@ public static class ZdCodec
             ZdValue.String s => Zd.EncodeString(s.Value),
             ZdValue.Array a => EncodeArray(a.Items),
             ZdValue.Map m => EncodeMap(m.Entries),
-            ZdValue.Null _ => throw new ArgumentException("zd 字节格式无 null 标签：Null 哨兵不能编码为字节，请先用 Json/Xml 等输出或替换为具体值"),
+            ZdValue.Null _ => Zd.EncodeNull(),
+            ZdValue.Bytes by => Zd.EncodeBytes(by.Content),
+            ZdValue.Ext ex => Zd.EncodeExt(ex.TypeTag, ex.Payload),
             _ => throw new ArgumentException($"未知 zd 值类型 {v.GetType().Name}"),
         };
     }
@@ -56,14 +58,18 @@ public static class ZdCodec
 
     /// <summary>把一段 zd 字节解码为一个 zd 值（从位置 0 起解析；允许尾随字节）。</summary>
     public static ZdValue Decode(byte[] data)
+        => Decode(data, ZdVersion.V2);
+
+    /// <summary>按目标版本解码（v1 需标志 0xc6 为 tuple 的旧语义兼容；v2 为 bytes）。</summary>
+    public static ZdValue Decode(byte[] data, ZdVersion version)
     {
         if (data is null || data.Length == 0)
             throw new ZdFormatException("zd 数据为空", 0);
         int pos = 0;
-        return DecodeValue(data, ref pos);
+        return DecodeValue(data, ref pos, version);
     }
 
-    private static ZdValue DecodeValue(byte[] t, ref int pos)
+    private static ZdValue DecodeValue(byte[] t, ref int pos, ZdVersion ver)
     {
         int start = pos;
         if (!TryByte(t, ref pos, out byte tag))
@@ -75,14 +81,15 @@ public static class ZdCodec
         if (tag >= 0xE0)
             return new ZdValue.Integer((sbyte)tag);             // fixint 负 -32..-1
         if (tag >= 0x80 && tag <= 0x8F)
-            return DecodeMap(t, ref pos, tag - 0x80);           // fixmap
+            return DecodeMap(t, ref pos, tag - 0x80, ver);           // fixmap
         if (tag >= 0x90 && tag <= 0x9F)
-            return DecodeArray(t, ref pos, tag - 0x90);         // fixarray
+            return DecodeArray(t, ref pos, tag - 0x90, ver);         // fixarray
         if (tag >= 0xA0 && tag <= 0xBF)
             return DecodeString(t, ref pos, tag - 0xA0);        // fixstr
 
         switch (tag)
         {
+            case Zd.TagNull: return ZdValue.Null.Instance;
             case Zd.TagFalse: return new ZdValue.Bool(false);
             case Zd.TagTrue: return new ZdValue.Bool(true);
             case Zd.TagChar:
@@ -132,11 +139,34 @@ public static class ZdCodec
             case Zd.TagArray16:
             case Zd.TagArray32:
                 int ac = tag == Zd.TagArray16 ? (int)ReadU16(t, ref pos, start) : unchecked((int)ReadU32(t, ref pos, start));
-                return DecodeArray(t, ref pos, ac);
+                return DecodeArray(t, ref pos, ac, ver);
             case Zd.TagMap16:
             case Zd.TagMap32:
                 int mc = tag == Zd.TagMap16 ? (int)ReadU16(t, ref pos, start) : unchecked((int)ReadU32(t, ref pos, start));
-                return DecodeMap(t, ref pos, mc);
+                return DecodeMap(t, ref pos, mc, ver);
+            case Zd.TagBytes:                                   // 0xC6 v2 bytes（v1 旧义 tuple，核心模型不支持）
+                if (ver == ZdVersion.V1)
+                    throw new ZdFormatException("v1 中 0xc6 为 tuple，核心模型不支持；请改用解码字节层", start);
+                {
+                    long blen = Zd.ReadArrayLength(t, ref pos);
+                    if (blen < 0 || blen > int.MaxValue || pos + blen > t.Length)
+                        throw new ZdFormatException("bytes 长度越界", start);
+                    byte[] raw = new byte[blen];
+                    Array.Copy(t, pos, raw, 0, (int)blen);
+                    pos += (int)blen;
+                    return new ZdValue.Bytes(raw);
+                }
+            case Zd.TagExt:                                     // 0xD7 v2 ext
+                {
+                    long typeTag = Zd.ReadVarint(t, ref pos);
+                    long elen = Zd.ReadVarint(t, ref pos);
+                    if (elen < 0 || elen > int.MaxValue || pos + elen > t.Length)
+                        throw new ZdFormatException("ext 载荷长度越界", start);
+                    var payload = new byte[elen];
+                    Array.Copy(t, pos, payload, 0, (int)elen);
+                    pos += (int)elen;
+                    return new ZdValue.Ext(typeTag, payload);
+                }
             default:
                 throw new ZdFormatException($"未知 zd 标签 0x{tag:X2}", start);
         }
@@ -152,23 +182,23 @@ public static class ZdCodec
         return new ZdValue.String(Encoding.UTF8.GetString(bytes));
     }
 
-    private static ZdValue DecodeArray(byte[] t, ref int pos, int count)
+    private static ZdValue DecodeArray(byte[] t, ref int pos, int count, ZdVersion ver)
     {
         var items = new ZdValue[count];
         for (int i = 0; i < count; i++)
-            items[i] = DecodeValue(t, ref pos);
+            items[i] = DecodeValue(t, ref pos, ver);
         return new ZdValue.Array(items);
     }
 
-    private static ZdValue DecodeMap(byte[] t, ref int pos, int count)
+    private static ZdValue DecodeMap(byte[] t, ref int pos, int count, ZdVersion ver)
     {
         var entries = new Dictionary<string, ZdValue>(count);
         for (int i = 0; i < count; i++)
         {
-            ZdValue key = DecodeValue(t, ref pos);
+            ZdValue key = DecodeValue(t, ref pos, ver);
             if (key is not ZdValue.String ks)
                 throw new ZdFormatException("map 键必须为字符串", pos);
-            ZdValue val = DecodeValue(t, ref pos);
+            ZdValue val = DecodeValue(t, ref pos, ver);
             entries[ks.Value] = val;
         }
         return new ZdValue.Map(entries);
