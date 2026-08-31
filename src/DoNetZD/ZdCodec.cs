@@ -16,43 +16,64 @@ public static class ZdCodec
     {
         if (v is null)
             throw new ArgumentNullException(nameof(v));
-        return v switch
-        {
-            ZdValue.Integer i => Zd.EncodeI64(i.Value),
-            ZdValue.Float f => Zd.EncodeF64(f.Value),                        // 类型层浮点统一 f64（f32 信息在类型层不保留）
-            ZdValue.Bool b => Zd.EncodeBool(b.Value),
-            ZdValue.Char c => Zd.ConcatOne(Zd.TagChar, Zd.WriteU32Be((uint)c.Codepoint)),
-            ZdValue.Trit t => Zd.EncodeTrit(t.Value),
-            ZdValue.String s => Zd.EncodeString(s.Value),
-            ZdValue.Array a => EncodeArray(a.Items),
-            ZdValue.Map m => EncodeMap(m.Entries),
-            ZdValue.Null _ => Zd.EncodeNull(),
-            ZdValue.Bytes by => Zd.EncodeBytes(by.Content),
-            ZdValue.Ext ex => Zd.EncodeExt(ex.TypeTag, ex.Payload),
-            _ => throw new ArgumentException($"未知 zd 值类型 {v.GetType().Name}"),
-        };
+        var b = new ZdBuilder(Estimate(v));
+        EncodeInto(b, v);
+        return b.ToArray();
     }
 
-    private static byte[] EncodeArray(IReadOnlyList<ZdValue> items)
+    private static void EncodeInto(ZdBuilder b, ZdValue v)
     {
-        byte[] head = Zd.EncodeArrayHeader(items.Count);
-        var body = new List<byte>();
-        for (int i = 0; i < items.Count; i++)
-            body.AddRange(Encode(items[i]));
-        return Zd.Concat(head, body.ToArray());
-    }
-
-    private static byte[] EncodeMap(IReadOnlyDictionary<string, ZdValue> entries)
-    {
-        byte[] head = Zd.EncodeMapHeader(entries.Count);
-        var body = new List<byte>();
-        foreach (var kv in entries)
+        switch (v)
         {
-            body.AddRange(Zd.EncodeString(kv.Key));
-            body.AddRange(Encode(kv.Value));
+            case ZdValue.Integer i: b.AppendBytes(Zd.EncodeI64(i.Value)); break;
+            case ZdValue.Float f: b.AppendBytes(Zd.EncodeF64(f.Value)); break;   // 类型层浮点统一 f64
+            case ZdValue.Bool bo: b.AppendByte(bo.Value ? Zd.TagTrue : Zd.TagFalse); break;
+            case ZdValue.Char c:
+                b.AppendByte(Zd.TagChar);
+                b.AppendBytes(Zd.WriteU32Be((uint)c.Codepoint));
+                break;
+            case ZdValue.Trit t:
+                b.AppendByte(Zd.TagTrit);
+                b.AppendByte((byte)(t.Value & 0xFF));
+                break;
+            case ZdValue.String s: b.AppendBytes(Zd.EncodeString(s.Value)); break;
+            case ZdValue.Array a:
+                b.AppendBytes(Zd.EncodeArrayHeader(a.Items.Count));
+                for (int i = 0; i < a.Items.Count; i++)
+                    EncodeInto(b, a.Items[i]);
+                break;
+            case ZdValue.Map m:
+                b.AppendBytes(Zd.EncodeMapHeader(m.Entries.Count));
+                foreach (var kv in m.Entries)
+                {
+                    b.AppendBytes(Zd.EncodeString(kv.Key));
+                    EncodeInto(b, kv.Value);
+                }
+                break;
+            case ZdValue.Null _: b.AppendByte(Zd.TagNull); break;
+            case ZdValue.Bytes by:
+                b.AppendByte(Zd.TagBytes);
+                b.AppendBytes(Zd.EncodeArrayHeader(by.Content.Length));
+                b.AppendBytes(by.Content);
+                break;
+            case ZdValue.Ext ex:
+                b.AppendByte(Zd.TagExt);
+                b.AppendBytes(Zd.WriteVarint(ex.TypeTag));
+                b.AppendBytes(Zd.WriteVarint(ex.Payload.Length));
+                b.AppendBytes(ex.Payload);
+                break;
+            default:
+                throw new ArgumentException($"未知 zd 值类型 {v.GetType().Name}");
         }
-        return Zd.Concat(head, body.ToArray());
     }
+
+    /// <summary>粗略估算编码后字节数，用于缓冲预分配（低估无害，builder 会扩容）。</summary>
+    private static int Estimate(ZdValue v) => v switch
+    {
+        ZdValue.Array a => 16 + a.Items.Count * 8,
+        ZdValue.Map m => 16 + m.Entries.Count * 24,
+        _ => 64,
+    };
 
     // ==================== 解码 ====================
 
